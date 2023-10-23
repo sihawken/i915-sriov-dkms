@@ -1,41 +1,22 @@
-# .github/workflows/example.yml
-
-name: Merge upstream branches
-on:
+name: Scheduled Merge Remote Action
+on: 
   schedule:
-     # actually, ~5 minutes is the highest
-     # effective frequency you will get
-    - cron:  "20 22 * * *"
+    - cron: '0 0 * * 1'
+    # scheduled for 00:00 every Monday
   workflow_dispatch:
-  
+
 jobs:
-  merge:
+  merge-upstream:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Merge upstream
-        run: |
-          git config --global user.name 'your-name'
-          git config --global user.email 'your-username@users.noreply.github.com'
-
-          # "git checkout master" is unnecessary, already here by default
-          git pull --unshallow  # this option is very important, you would get
-                                # complains about unrelated histories without it.
-                                # (but actions/checkout@v2 can also be instructed
-                                # to fetch all git depth right from the start)
-
-          git remote add upstream https://github.com/strongtz/i915-sriov-dkms.git
-          git fetch upstream
-
-          # Neither forget the -b opt,
-          # the feature/x ref is ambiguous at this stage
-          git checkout -b upstream
-          git merge --no-edit upstream
-          git push origin upstream
-
-          git checkout master
-          git merge --no-edit upstream/master
-          git push origin master
-
-          # etc
-
+    steps: 
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          ref: upstream             # set the branch to merge to
+          fetch-depth: 0 
+      - name: Merge Upstream
+        uses: exions/merge-upstream@v1
+        with:
+          upstream: strongtz/i915-sriov-dkms      # set the upstream repo
+          upstream-branch: master   # set the upstream branch to merge from
+          branch: upstream          # set the branch to merge to
