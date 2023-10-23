@@ -15,7 +15,7 @@ jobs:
           ref: master             # set the branch to merge to
           fetch-depth: 0 
       - name: Merge Upstream
-        uses: exions/merge-upstream@v1
+        uses: discdiver/merge-from-upstream-repo@v0.0.9
         with:
           upstream: strongtz/i915-sriov-dkms      # set the upstream repo
           upstream-branch: master   # set the upstream branch to merge from
