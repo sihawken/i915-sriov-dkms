@@ -1,4 +1,4 @@
-name: Merge i915-sriov-dkms upstream 
+name: Merge i915-sriov-dkms upstream
 on: 
   schedule:
     - cron: '0 0 * * 1'
@@ -27,4 +27,4 @@ jobs:
           upstream-branch: master   # set the upstream branch to merge from
           branch: master          # set the branch to merge to
   webhook:
-    
+
