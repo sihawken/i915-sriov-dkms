@@ -1,4 +1,4 @@
-name: Scheduled Merge Remote Action
+name: Pull i915-sriov-dkms upstream
 on: 
   schedule:
     - cron: '0 0 * * 1'
