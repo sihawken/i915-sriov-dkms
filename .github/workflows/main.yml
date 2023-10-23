@@ -13,7 +13,13 @@ jobs:
         uses: actions/checkout@v2
         with:
           ref: master             # set the branch to merge to
-          fetch-depth: 0 
+          fetch-depth: 0
+          useremail: ${{ github.event.inputs.useremail }}
+          username: ${{ github.event.inputs.usename }}
+          upstream: ${{ github.event.inputs.upstream }}
+          upstream-branch: ${{ github.event.inputs.upstream-branch }}
+          branch: ${{ github.event.inputs.branch }}
+          token: ${{ secrets.TOKEN }}
       - name: Merge Upstream
         uses: discdiver/merge-from-upstream-repo@v0.0.9
         with:
