@@ -45,6 +45,7 @@
 #include "intel_dsi_vbt.h"
 #include "intel_panel.h"
 #include "intel_vdsc.h"
+#include "intel_vdsc_regs.h"
 #include "skl_scaler.h"
 #include "skl_universal_plane.h"
 
@@ -311,7 +312,7 @@ static void configure_dual_link_mode(struct intel_encoder *encoder,
 
 		dss_ctl1 &= ~LEFT_DL_BUF_TARGET_DEPTH_MASK;
 		dss_ctl1 |= LEFT_DL_BUF_TARGET_DEPTH(dl_buffer_depth);
-		intel_de_rmw(dev_priv, DSS_CTL2, RIGHT_DL_BUF_TARGET_DEPTH_MASK,
+		intel_de_rmw(dev_priv, dss_ctl2_reg, RIGHT_DL_BUF_TARGET_DEPTH_MASK,
 			     RIGHT_DL_BUF_TARGET_DEPTH(dl_buffer_depth));
 	} else {
 		/* Interleave */
@@ -899,8 +900,8 @@ gen11_dsi_set_transcoder_timings(struct intel_encoder *encoder,
 	/* program TRANS_HTOTAL register */
 	for_each_dsi_port(port, intel_dsi->ports) {
 		dsi_trans = dsi_port_to_transcoder(port);
-		intel_de_write(dev_priv, HTOTAL(dsi_trans),
-			       (hactive - 1) | ((htotal - 1) << 16));
+		intel_de_write(dev_priv, TRANS_HTOTAL(dsi_trans),
+			       HACTIVE(hactive - 1) | HTOTAL(htotal - 1));
 	}
 
 	/* TRANS_HSYNC register to be programmed only for video mode */
@@ -922,8 +923,8 @@ gen11_dsi_set_transcoder_timings(struct intel_encoder *encoder,
 
 		for_each_dsi_port(port, intel_dsi->ports) {
 			dsi_trans = dsi_port_to_transcoder(port);
-			intel_de_write(dev_priv, HSYNC(dsi_trans),
-				       (hsync_start - 1) | ((hsync_end - 1) << 16));
+			intel_de_write(dev_priv, TRANS_HSYNC(dsi_trans),
+				       HSYNC_START(hsync_start - 1) | HSYNC_END(hsync_end - 1));
 		}
 	}
 
@@ -936,8 +937,8 @@ gen11_dsi_set_transcoder_timings(struct intel_encoder *encoder,
 		 * struct drm_display_mode.
 		 * For interlace mode: program required pixel minus 2
 		 */
-		intel_de_write(dev_priv, VTOTAL(dsi_trans),
-			       (vactive - 1) | ((vtotal - 1) << 16));
+		intel_de_write(dev_priv, TRANS_VTOTAL(dsi_trans),
+			       VACTIVE(vactive - 1) | VTOTAL(vtotal - 1));
 	}
 
 	if (vsync_end < vsync_start || vsync_end > vtotal)
@@ -950,8 +951,8 @@ gen11_dsi_set_transcoder_timings(struct intel_encoder *encoder,
 	if (is_vid_mode(intel_dsi)) {
 		for_each_dsi_port(port, intel_dsi->ports) {
 			dsi_trans = dsi_port_to_transcoder(port);
-			intel_de_write(dev_priv, VSYNC(dsi_trans),
-				       (vsync_start - 1) | ((vsync_end - 1) << 16));
+			intel_de_write(dev_priv, TRANS_VSYNC(dsi_trans),
+				       VSYNC_START(vsync_start - 1) | VSYNC_END(vsync_end - 1));
 		}
 	}
 
@@ -964,17 +965,22 @@ gen11_dsi_set_transcoder_timings(struct intel_encoder *encoder,
 	if (is_vid_mode(intel_dsi)) {
 		for_each_dsi_port(port, intel_dsi->ports) {
 			dsi_trans = dsi_port_to_transcoder(port);
-			intel_de_write(dev_priv, VSYNCSHIFT(dsi_trans),
+			intel_de_write(dev_priv, TRANS_VSYNCSHIFT(dsi_trans),
 				       vsync_shift);
 		}
 	}
 
-	/* program TRANS_VBLANK register, should be same as vtotal programmed */
+	/*
+	 * program TRANS_VBLANK register, should be same as vtotal programmed
+	 *
+	 * FIXME get rid of these local hacks and do it right,
+	 * this will not handle eg. delayed vblank correctly.
+	 */
 	if (DISPLAY_VER(dev_priv) >= 12) {
 		for_each_dsi_port(port, intel_dsi->ports) {
 			dsi_trans = dsi_port_to_transcoder(port);
-			intel_de_write(dev_priv, VBLANK(dsi_trans),
-				       (vactive - 1) | ((vtotal - 1) << 16));
+			intel_de_write(dev_priv, TRANS_VBLANK(dsi_trans),
+				       VBLANK_START(vactive - 1) | VBLANK_END(vtotal - 1));
 		}
 	}
 }
@@ -988,11 +994,11 @@ static void gen11_dsi_enable_transcoder(struct intel_encoder *encoder)
 
 	for_each_dsi_port(port, intel_dsi->ports) {
 		dsi_trans = dsi_port_to_transcoder(port);
-		intel_de_rmw(dev_priv, PIPECONF(dsi_trans), 0, PIPECONF_ENABLE);
+		intel_de_rmw(dev_priv, TRANSCONF(dsi_trans), 0, TRANSCONF_ENABLE);
 
 		/* wait for transcoder to be enabled */
-		if (intel_de_wait_for_set(dev_priv, PIPECONF(dsi_trans),
-					  PIPECONF_STATE_ENABLE, 10))
+		if (intel_de_wait_for_set(dev_priv, TRANSCONF(dsi_trans),
+					  TRANSCONF_STATE_ENABLE, 10))
 			drm_err(&dev_priv->drm,
 				"DSI transcoder not enabled\n");
 	}
@@ -1134,7 +1140,7 @@ static void gen11_dsi_powerup_panel(struct intel_encoder *encoder)
 
 	/* panel power on related mipi dsi vbt sequences */
 	intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_POWER_ON);
-	intel_dsi_msleep(intel_dsi, intel_dsi->panel_on_delay);
+	msleep(intel_dsi->panel_on_delay);
 	intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_DEASSERT_RESET);
 	intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_INIT_OTP);
 	intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_DISPLAY_ON);
@@ -1250,11 +1256,11 @@ static void gen11_dsi_disable_transcoder(struct intel_encoder *encoder)
 		dsi_trans = dsi_port_to_transcoder(port);
 
 		/* disable transcoder */
-		intel_de_rmw(dev_priv, PIPECONF(dsi_trans), PIPECONF_ENABLE, 0);
+		intel_de_rmw(dev_priv, TRANSCONF(dsi_trans), TRANSCONF_ENABLE, 0);
 
 		/* wait for transcoder to be disabled */
-		if (intel_de_wait_for_clear(dev_priv, PIPECONF(dsi_trans),
-					    PIPECONF_STATE_ENABLE, 50))
+		if (intel_de_wait_for_clear(dev_priv, TRANSCONF(dsi_trans),
+					    TRANSCONF_STATE_ENABLE, 50))
 			drm_err(&dev_priv->drm,
 				"DSI trancoder not disabled\n");
 	}
@@ -1494,7 +1500,7 @@ static void gen11_dsi_get_config(struct intel_encoder *encoder,
 
 	gen11_dsi_get_timings(encoder, pipe_config);
 	pipe_config->output_types |= BIT(INTEL_OUTPUT_DSI);
-	pipe_config->pipe_bpp = bdw_get_pipemisc_bpp(crtc);
+	pipe_config->pipe_bpp = bdw_get_pipe_misc_bpp(crtc);
 
 	/* Get the details on which TE should be enabled */
 	if (is_cmd_mode(intel_dsi))
@@ -1546,8 +1552,6 @@ static int gen11_dsi_dsc_compute_config(struct intel_encoder *encoder,
 	if (crtc_state->dsc.slice_count > 1)
 		crtc_state->dsc.dsc_split = true;
 
-	vdsc_cfg->convert_rgb = true;
-
 	/* FIXME: initialize from VBT */
 	vdsc_cfg->rc_model_size = DSC_RC_MODEL_SIZE_CONST;
 
@@ -1587,6 +1591,7 @@ static int gen11_dsi_compute_config(struct intel_encoder *encoder,
 		&pipe_config->hw.adjusted_mode;
 	int ret;
 
+	pipe_config->sink_format = INTEL_OUTPUT_FORMAT_RGB;
 	pipe_config->output_format = INTEL_OUTPUT_FORMAT_RGB;
 
 	ret = intel_panel_compute_config(intel_connector, adjusted_mode);
@@ -1674,8 +1679,8 @@ static bool gen11_dsi_get_hw_state(struct intel_encoder *encoder,
 			goto out;
 		}
 
-		tmp = intel_de_read(dev_priv, PIPECONF(dsi_trans));
-		ret = tmp & PIPECONF_ENABLE;
+		tmp = intel_de_read(dev_priv, TRANSCONF(dsi_trans));
+		ret = tmp & TRANSCONF_ENABLE;
 	}
 out:
 	intel_display_power_put(dev_priv, encoder->power_domain, wakeref);

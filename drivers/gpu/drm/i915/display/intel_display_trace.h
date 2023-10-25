@@ -12,10 +12,8 @@
 #include <linux/string_helpers.h>
 #include <linux/types.h>
 #include <linux/tracepoint.h>
-#include <linux/version.h>
 
 #include "i915_drv.h"
-#include "i915_irq.h"
 #include "intel_crtc.h"
 #include "intel_display_types.h"
 #include "intel_vblank.h"
@@ -310,7 +308,6 @@ TRACE_EVENT(vlv_fifo_size,
 		      __entry->sprite0_start, __entry->sprite1_start, __entry->fifo_size)
 );
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 TRACE_EVENT(intel_plane_update_noarm,
 	    TP_PROTO(struct intel_plane *plane, struct intel_crtc *crtc),
 	    TP_ARGS(plane, crtc),
@@ -397,88 +394,6 @@ TRACE_EVENT(intel_plane_disable_arm,
 		      __get_str(dev), pipe_name(__entry->pipe), __get_str(name),
 		      __entry->frame, __entry->scanline)
 );
-#else
-TRACE_EVENT(intel_plane_update_noarm,
-	    TP_PROTO(struct drm_plane *plane, struct intel_crtc *crtc),
-	    TP_ARGS(plane, crtc),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __array(int, src, 4)
-			     __array(int, dst, 4)
-			     __string(name, plane->name)
-			     ),
-
-	    TP_fast_assign(
-			   __assign_str(name, plane->name);
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   memcpy(__entry->src, &plane->state->src, sizeof(__entry->src));
-			   memcpy(__entry->dst, &plane->state->dst, sizeof(__entry->dst));
-			   ),
-
-	    TP_printk("pipe %c, plane %s, frame=%u, scanline=%u, " DRM_RECT_FP_FMT " -> " DRM_RECT_FMT,
-		      pipe_name(__entry->pipe), __get_str(name),
-		      __entry->frame, __entry->scanline,
-		      DRM_RECT_FP_ARG((const struct drm_rect *)__entry->src),
-		      DRM_RECT_ARG((const struct drm_rect *)__entry->dst))
-);
-
-TRACE_EVENT(intel_plane_update_arm,
-	    TP_PROTO(struct drm_plane *plane, struct intel_crtc *crtc),
-	    TP_ARGS(plane, crtc),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __array(int, src, 4)
-			     __array(int, dst, 4)
-			     __string(name, plane->name)
-			     ),
-
-	    TP_fast_assign(
-			   __assign_str(name, plane->name);
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   memcpy(__entry->src, &plane->state->src, sizeof(__entry->src));
-			   memcpy(__entry->dst, &plane->state->dst, sizeof(__entry->dst));
-			   ),
-
-	    TP_printk("pipe %c, plane %s, frame=%u, scanline=%u, " DRM_RECT_FP_FMT " -> " DRM_RECT_FMT,
-		      pipe_name(__entry->pipe), __get_str(name),
-		      __entry->frame, __entry->scanline,
-		      DRM_RECT_FP_ARG((const struct drm_rect *)__entry->src),
-		      DRM_RECT_ARG((const struct drm_rect *)__entry->dst))
-);
-
-TRACE_EVENT(intel_plane_disable_arm,
-	    TP_PROTO(struct drm_plane *plane, struct intel_crtc *crtc),
-	    TP_ARGS(plane, crtc),
-
-	    TP_STRUCT__entry(
-			     __field(enum pipe, pipe)
-			     __field(u32, frame)
-			     __field(u32, scanline)
-			     __string(name, plane->name)
-			     ),
-
-	    TP_fast_assign(
-			   __assign_str(name, plane->name);
-			   __entry->pipe = crtc->pipe;
-			   __entry->frame = intel_crtc_get_vblank_counter(crtc);
-			   __entry->scanline = intel_get_crtc_scanline(crtc);
-			   ),
-
-	    TP_printk("pipe %c, plane %s, frame=%u, scanline=%u",
-		      pipe_name(__entry->pipe), __get_str(name),
-		      __entry->frame, __entry->scanline)
-);
-#endif
 
 TRACE_EVENT(intel_fbc_activate,
 	    TP_PROTO(struct intel_plane *plane),
@@ -686,7 +601,6 @@ TRACE_EVENT(intel_pipe_update_end,
 		      __entry->frame, __entry->scanline)
 );
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 TRACE_EVENT(intel_frontbuffer_invalidate,
 	    TP_PROTO(struct drm_i915_private *i915,
 		     unsigned int frontbuffer_bits, unsigned int origin),
@@ -728,43 +642,6 @@ TRACE_EVENT(intel_frontbuffer_flush,
 	    TP_printk("dev %s, frontbuffer_bits=0x%08x, origin=%u",
 		      __get_str(dev), __entry->frontbuffer_bits, __entry->origin)
 );
-#else
-TRACE_EVENT(intel_frontbuffer_invalidate,
-	    TP_PROTO(unsigned int frontbuffer_bits, unsigned int origin),
-	    TP_ARGS(frontbuffer_bits, origin),
-
-	    TP_STRUCT__entry(
-			     __field(unsigned int, frontbuffer_bits)
-			     __field(unsigned int, origin)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->frontbuffer_bits = frontbuffer_bits;
-			   __entry->origin = origin;
-			   ),
-
-	    TP_printk("frontbuffer_bits=0x%08x, origin=%u",
-		      __entry->frontbuffer_bits, __entry->origin)
-);
-
-TRACE_EVENT(intel_frontbuffer_flush,
-	    TP_PROTO(unsigned int frontbuffer_bits, unsigned int origin),
-	    TP_ARGS(frontbuffer_bits, origin),
-
-	    TP_STRUCT__entry(
-			     __field(unsigned int, frontbuffer_bits)
-			     __field(unsigned int, origin)
-			     ),
-
-	    TP_fast_assign(
-			   __entry->frontbuffer_bits = frontbuffer_bits;
-			   __entry->origin = origin;
-			   ),
-
-	    TP_printk("frontbuffer_bits=0x%08x, origin=%u",
-		      __entry->frontbuffer_bits, __entry->origin)
-);
-#endif
 
 #endif /* __INTEL_DISPLAY_TRACE_H__ */
 

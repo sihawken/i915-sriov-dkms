@@ -76,10 +76,6 @@ i915_param_named_unsafe(enable_fbc, int, 0400,
 	"Enable frame buffer compression for power savings "
 	"(default: -1 (use per-chip default))");
 
-i915_param_named_unsafe(enable_rc6, bool, 0400,
-	"Enable power-saving render C-state 6; "
-	"(default: true)");
-
 i915_param_named_unsafe(lvds_channel_mode, int, 0400,
 	 "Specify LVDS channel mode "
 	 "(0=probe BIOS [default], 1=single-channel, 2=dual-channel)");
@@ -125,6 +121,9 @@ i915_param_named_unsafe(enable_psr2_sel_fetch, bool, 0400,
 	"(0=disabled, 1=enabled) "
 	"Default: 0");
 
+i915_param_named_unsafe(enable_sagv, bool, 0600,
+	"Enable system agent voltage/frequency scaling (SAGV) (default: true)");
+
 i915_param_named_unsafe(force_probe, charp, 0400,
 	"Force probe options for specified supported devices. "
 	"See CONFIG_DRM_I915_FORCE_PROBE for details.");
@@ -134,6 +133,9 @@ i915_param_named_unsafe(disable_power_well, int, 0400,
 	"(-1=auto [default], 0=power wells always on, 1=power wells disabled when possible)");
 
 i915_param_named_unsafe(enable_ips, int, 0400, "Enable IPS (default: true)");
+
+i915_param_named_unsafe(enable_dpt, bool, 0400,
+	"Enable display page table (DPT) (default: true)");
 
 i915_param_named(fastboot, int, 0400,
 	"Try to skip unnecessary mode sets at boot time "
@@ -225,10 +227,6 @@ i915_param_named_unsafe(lmem_size, uint, 0400,
 			"Set the lmem size(in MiB) for each region. (default: 0, all memory)");
 i915_param_named_unsafe(lmem_bar_size, uint, 0400,
 			"Set the lmem bar size(in MiB).");
-
-i915_param_named(max_vfs, uint, 0400,
-	"Limit number of virtual functions to allocate. "
-	"(0 = no VFs [default]; N = allow up to N VFs)");
 
 static void _param_print_bool(struct drm_printer *p, const char *name,
 			      bool val)

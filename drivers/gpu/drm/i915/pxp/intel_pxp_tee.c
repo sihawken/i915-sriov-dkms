@@ -14,12 +14,41 @@
 
 #include "intel_pxp.h"
 #include "intel_pxp_cmd_interface_42.h"
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 #include "intel_pxp_huc.h"
-#endif
 #include "intel_pxp_session.h"
 #include "intel_pxp_tee.h"
 #include "intel_pxp_types.h"
+
+static bool
+is_fw_err_platform_config(u32 type)
+{
+	switch (type) {
+	case PXP_STATUS_ERROR_API_VERSION:
+	case PXP_STATUS_PLATFCONFIG_KF1_NOVERIF:
+	case PXP_STATUS_PLATFCONFIG_KF1_BAD:
+		return true;
+	default:
+		break;
+	}
+	return false;
+}
+
+static const char *
+fw_err_to_string(u32 type)
+{
+	switch (type) {
+	case PXP_STATUS_ERROR_API_VERSION:
+		return "ERR_API_VERSION";
+	case PXP_STATUS_NOT_READY:
+		return "ERR_NOT_READY";
+	case PXP_STATUS_PLATFCONFIG_KF1_NOVERIF:
+	case PXP_STATUS_PLATFCONFIG_KF1_BAD:
+		return "ERR_PLATFORM_CONFIG";
+	default:
+		break;
+	}
+	return NULL;
+}
 
 static int intel_pxp_tee_io_message(struct intel_pxp *pxp,
 				    void *msg_in, u32 msg_in_size,
@@ -69,7 +98,6 @@ unlock:
 	return ret;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 int intel_pxp_tee_stream_message(struct intel_pxp *pxp,
 				 u8 client_id, u32 fence_id,
 				 void *msg_in, size_t msg_in_len,
@@ -110,7 +138,6 @@ unlock:
 	mutex_unlock(&pxp->tee_mutex);
 	return ret;
 }
-#endif
 
 /**
  * i915_pxp_tee_component_bind - bind function to pass the function pointers to pxp_tee
@@ -191,7 +218,6 @@ static const struct component_ops i915_pxp_tee_component_ops = {
 	.unbind = i915_pxp_tee_component_unbind,
 };
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 static int alloc_streaming_command(struct intel_pxp *pxp)
 {
 	struct drm_i915_private *i915 = pxp->ctrl_gt->i915;
@@ -251,7 +277,6 @@ static void free_streaming_command(struct intel_pxp *pxp)
 	i915_gem_object_unpin_pages(obj);
 	i915_gem_object_put(obj);
 }
-#endif
 
 int intel_pxp_tee_component_init(struct intel_pxp *pxp)
 {
@@ -259,13 +284,9 @@ int intel_pxp_tee_component_init(struct intel_pxp *pxp)
 	struct intel_gt *gt = pxp->ctrl_gt;
 	struct drm_i915_private *i915 = gt->i915;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
-	mutex_init(&pxp->tee_mutex);
-
 	ret = alloc_streaming_command(pxp);
 	if (ret)
 		return ret;
-#endif
 
 	ret = component_add_typed(i915->drm.dev, &i915_pxp_tee_component_ops,
 				  I915_COMPONENT_PXP);
@@ -279,9 +300,7 @@ int intel_pxp_tee_component_init(struct intel_pxp *pxp)
 	return 0;
 
 out_free:
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 	free_streaming_command(pxp);
-#endif
 	return ret;
 }
 
@@ -295,9 +314,7 @@ void intel_pxp_tee_component_fini(struct intel_pxp *pxp)
 	component_del(i915->drm.dev, &i915_pxp_tee_component_ops);
 	pxp->pxp_component_added = false;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 	free_streaming_command(pxp);
-#endif
 }
 
 int intel_pxp_tee_cmd_create_arb_session(struct intel_pxp *pxp,
@@ -319,15 +336,22 @@ int intel_pxp_tee_cmd_create_arb_session(struct intel_pxp *pxp,
 				       &msg_out, sizeof(msg_out),
 				       NULL);
 
-	if (ret)
-		drm_err(&i915->drm, "Failed to send tee msg ret=[%d]\n", ret);
-	else if (msg_out.header.status == PXP_STATUS_ERROR_API_VERSION)
-		drm_dbg(&i915->drm, "PXP firmware version unsupported, requested: "
-			"CMD-ID-[0x%08x] on API-Ver-[0x%08x]\n",
-			msg_in.header.command_id, msg_in.header.api_version);
-	else if (msg_out.header.status != 0x0)
-		drm_warn(&i915->drm, "PXP firmware failed arb session init request ret=[0x%08x]\n",
-			 msg_out.header.status);
+	if (ret) {
+		drm_err(&i915->drm, "Failed to send tee msg init arb session, ret=[%d]\n", ret);
+	} else if (msg_out.header.status != 0) {
+		if (is_fw_err_platform_config(msg_out.header.status)) {
+			drm_info_once(&i915->drm,
+				      "PXP init-arb-session-%d failed due to BIOS/SOC:0x%08x:%s\n",
+				      arb_session_id, msg_out.header.status,
+				      fw_err_to_string(msg_out.header.status));
+		} else {
+			drm_dbg(&i915->drm, "PXP init-arb-session--%d failed 0x%08x:%st:\n",
+				arb_session_id, msg_out.header.status,
+				fw_err_to_string(msg_out.header.status));
+			drm_dbg(&i915->drm, "     cmd-detail: ID=[0x%08x],API-Ver-[0x%08x]\n",
+				msg_in.header.command_id, msg_in.header.api_version);
+		}
+	}
 
 	return ret;
 }
@@ -359,10 +383,21 @@ try_again:
 	if ((ret || msg_out.header.status != 0x0) && ++trials < 3)
 		goto try_again;
 
-	if (ret)
-		drm_err(&i915->drm, "Failed to send tee msg for inv-stream-key-%d, ret=[%d]\n",
+	if (ret) {
+		drm_err(&i915->drm, "Failed to send tee msg for inv-stream-key-%u, ret=[%d]\n",
 			session_id, ret);
-	else if (msg_out.header.status != 0x0)
-		drm_warn(&i915->drm, "PXP firmware failed inv-stream-key-%d with status 0x%08x\n",
-			 session_id, msg_out.header.status);
+	} else if (msg_out.header.status != 0) {
+		if (is_fw_err_platform_config(msg_out.header.status)) {
+			drm_info_once(&i915->drm,
+				      "PXP inv-stream-key-%u failed due to BIOS/SOC :0x%08x:%s\n",
+				      session_id, msg_out.header.status,
+				      fw_err_to_string(msg_out.header.status));
+		} else {
+			drm_dbg(&i915->drm, "PXP inv-stream-key-%u failed 0x%08x:%s:\n",
+				session_id, msg_out.header.status,
+				fw_err_to_string(msg_out.header.status));
+			drm_dbg(&i915->drm, "     cmd-detail: ID=[0x%08x],API-Ver-[0x%08x]\n",
+				msg_in.header.command_id, msg_in.header.api_version);
+		}
+	}
 }
