@@ -407,7 +407,6 @@ obj-$(CONFIG_DRM_I915_GVT_KVMGT) += kvmgt.o
 
 CFLAGS_i915_trace_points.o := -I$(KBUILD_EXTMOD)/drivers/gpu/drm/i915
 
-
 i915-y := $(addprefix $(DRMD)i915/,$(i915-y))
 
 # ----------------------------------------------------------------------------
@@ -425,5 +424,6 @@ LINUXINCLUDE := \
     $(LINUXINCLUDE)
 
 obj-m := i915.o
+obj-m += drivers/gpu/drm/
 
 .PHONY: default clean modules load unload install patch
