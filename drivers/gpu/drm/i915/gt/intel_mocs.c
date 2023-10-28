@@ -544,7 +544,7 @@ static unsigned int get_mocs_settings(const struct drm_i915_private *i915,
 		table->n_entries = GEN9_NUM_MOCS_ENTRIES;
 		table->uc_index = 1;
 		table->unused_entries_index = 5;
-	} else if (IS_TIGERLAKE(i915) || IS_ROCKETLAKE(i915)) {
+	} else if (IS_TIGERLAKE(i915) || IS_ALDERLAKE_S(i915) || IS_ROCKETLAKE(i915)) {
 		/* For TGL/RKL, Can't be changed now for ABI reasons */
 		table->size  = ARRAY_SIZE(tgl_mocs_table);
 		table->table = tgl_mocs_table;
@@ -575,6 +575,9 @@ static unsigned int get_mocs_settings(const struct drm_i915_private *i915,
 	}
 
 	if (GEM_DEBUG_WARN_ON(table->size > table->n_entries))
+		return 0;
+
+	if (IS_SRIOV_VF(i915))
 		return 0;
 
 	/* WaDisableSkipCaching:skl,bxt,kbl,glk */
@@ -714,9 +717,9 @@ void intel_mocs_init_engine(struct intel_engine_cs *engine)
 		init_l3cc_table(engine->gt, &table);
 }
 
-static u32 global_mocs_offset(void)
+static u32 global_mocs_offset(struct intel_gt *gt)
 {
-	return i915_mmio_reg_offset(GEN12_GLOBAL_MOCS(0));
+	return i915_mmio_reg_offset(GEN12_GLOBAL_MOCS(0)) + gt->uncore->gsi_offset;
 }
 
 void intel_set_mocs_index(struct intel_gt *gt)
@@ -739,7 +742,7 @@ void intel_mocs_init(struct intel_gt *gt)
 	 */
 	flags = get_mocs_settings(gt->i915, &table);
 	if (flags & HAS_GLOBAL_MOCS)
-		__init_mocs_table(gt->uncore, &table, global_mocs_offset());
+		__init_mocs_table(gt->uncore, &table, global_mocs_offset(gt));
 
 	/*
 	 * Initialize the L3CC table as part of mocs initalization to make

@@ -136,7 +136,7 @@ static ssize_t intel_dsi_host_transfer(struct mipi_dsi_host *host,
 	enum port port = intel_dsi_host->port;
 	struct mipi_dsi_packet packet;
 	ssize_t ret;
-	const u8 *header;
+	const u8 *header, *data;
 	i915_reg_t data_reg, ctrl_reg;
 	u32 data_mask, ctrl_mask;
 
@@ -145,6 +145,7 @@ static ssize_t intel_dsi_host_transfer(struct mipi_dsi_host *host,
 		return ret;
 
 	header = packet.header;
+	data = packet.payload;
 
 	if (msg->flags & MIPI_DSI_MSG_USE_LPM) {
 		data_reg = MIPI_LP_GEN_DATA(port);
@@ -279,7 +280,6 @@ static int intel_dsi_compute_config(struct intel_encoder *encoder,
 	int ret;
 
 	drm_dbg_kms(&dev_priv->drm, "\n");
-	pipe_config->sink_format = INTEL_OUTPUT_FORMAT_RGB;
 	pipe_config->output_format = INTEL_OUTPUT_FORMAT_RGB;
 
 	ret = intel_panel_compute_config(intel_connector, adjusted_mode);
@@ -737,6 +737,7 @@ static void intel_dsi_pre_enable(struct intel_atomic_state *state,
 {
 	struct intel_dsi *intel_dsi = enc_to_intel_dsi(encoder);
 	struct intel_crtc *crtc = to_intel_crtc(pipe_config->uapi.crtc);
+	struct intel_connector *connector = to_intel_connector(conn_state->connector);
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	enum pipe pipe = crtc->pipe;
 	enum port port;
@@ -778,10 +779,21 @@ static void intel_dsi_pre_enable(struct intel_atomic_state *state,
 	if (!IS_GEMINILAKE(dev_priv))
 		intel_dsi_prepare(encoder, pipe_config);
 
-	/* Give the panel time to power-on and then deassert its reset */
 	intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_POWER_ON);
-	msleep(intel_dsi->panel_on_delay);
-	intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_DEASSERT_RESET);
+
+	/*
+	 * Give the panel time to power-on and then deassert its reset.
+	 * Depending on the VBT MIPI sequences version the deassert-seq
+	 * may contain the necessary delay, intel_dsi_msleep() will skip
+	 * the delay in that case. If there is no deassert-seq, then an
+	 * unconditional msleep is used to give the panel time to power-on.
+	 */
+	if (connector->panel.vbt.dsi.sequence[MIPI_SEQ_DEASSERT_RESET]) {
+		intel_dsi_msleep(intel_dsi, intel_dsi->panel_on_delay);
+		intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_DEASSERT_RESET);
+	} else {
+		msleep(intel_dsi->panel_on_delay);
+	}
 
 	if (IS_GEMINILAKE(dev_priv)) {
 		glk_cold_boot = glk_dsi_enable_io(encoder);
@@ -815,7 +827,7 @@ static void intel_dsi_pre_enable(struct intel_atomic_state *state,
 		msleep(20); /* XXX */
 		for_each_dsi_port(port, intel_dsi->ports)
 			dpi_send_cmd(intel_dsi, TURN_ON, false, port);
-		msleep(100);
+		intel_dsi_msleep(intel_dsi, 100);
 
 		intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_DISPLAY_ON);
 
@@ -937,7 +949,7 @@ static void intel_dsi_post_disable(struct intel_atomic_state *state,
 	/* Assert reset */
 	intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_ASSERT_RESET);
 
-	msleep(intel_dsi->panel_off_delay);
+	intel_dsi_msleep(intel_dsi, intel_dsi->panel_off_delay);
 	intel_dsi_vbt_exec_sequence(intel_dsi, MIPI_SEQ_POWER_OFF);
 
 	intel_dsi->panel_power_off_time = ktime_get_boottime();
@@ -988,7 +1000,7 @@ static bool intel_dsi_get_hw_state(struct intel_encoder *encoder,
 		 */
 		if ((IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv)) &&
 		    port == PORT_C)
-			enabled = intel_de_read(dev_priv, TRANSCONF(PIPE_B)) & TRANSCONF_ENABLE;
+			enabled = intel_de_read(dev_priv, PIPECONF(PIPE_B)) & PIPECONF_ENABLE;
 
 		/* Try command mode if video mode not enabled */
 		if (!enabled) {
@@ -1039,7 +1051,7 @@ static void bxt_dsi_get_pipe_config(struct intel_encoder *encoder,
 	unsigned int lane_count = intel_dsi->lane_count;
 	unsigned int bpp, fmt;
 	enum port port;
-	u16 hactive, hfp, hsync, hbp, vfp, vsync;
+	u16 hactive, hfp, hsync, hbp, vfp, vsync, vbp;
 	u16 hfp_sw, hsync_sw, hbp_sw;
 	u16 crtc_htotal_sw, crtc_hsync_start_sw, crtc_hsync_end_sw,
 				crtc_hblank_start_sw, crtc_hblank_end_sw;
@@ -1060,7 +1072,7 @@ static void bxt_dsi_get_pipe_config(struct intel_encoder *encoder,
 	bpp = mipi_dsi_pixel_format_to_bpp(
 			pixel_format_from_register_bits(fmt));
 
-	pipe_config->pipe_bpp = bdw_get_pipe_misc_bpp(crtc);
+	pipe_config->pipe_bpp = bdw_get_pipemisc_bpp(crtc);
 
 	/* Enable Frame time stamo based scanline reporting */
 	pipe_config->mode_flags |=
@@ -1104,6 +1116,7 @@ static void bxt_dsi_get_pipe_config(struct intel_encoder *encoder,
 	/* vertical values are in terms of lines */
 	vfp = intel_de_read(dev_priv, MIPI_VFP_COUNT(port));
 	vsync = intel_de_read(dev_priv, MIPI_VSYNC_PADDING_COUNT(port));
+	vbp = intel_de_read(dev_priv, MIPI_VBP_COUNT(port));
 
 	adjusted_mode->crtc_htotal = hactive + hfp + hsync + hbp;
 	adjusted_mode->crtc_hsync_start = hfp + adjusted_mode->crtc_hdisplay;

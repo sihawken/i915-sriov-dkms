@@ -176,15 +176,15 @@ enum pipe intel_connector_get_pipe(struct intel_connector *connector)
 /**
  * intel_connector_update_modes - update connector from edid
  * @connector: DRM connector device to use
- * @drm_edid: previously read EDID information
+ * @edid: previously read EDID information
  */
 int intel_connector_update_modes(struct drm_connector *connector,
-				 const struct drm_edid *drm_edid)
+				struct edid *edid)
 {
 	int ret;
 
-	drm_edid_connector_update(connector, drm_edid);
-	ret = drm_edid_connector_add_modes(connector);
+	drm_connector_update_edid_property(connector, edid);
+	ret = drm_add_edid_modes(connector, edid);
 
 	return ret;
 }
@@ -199,15 +199,15 @@ int intel_connector_update_modes(struct drm_connector *connector,
 int intel_ddc_get_modes(struct drm_connector *connector,
 			struct i2c_adapter *adapter)
 {
-	const struct drm_edid *drm_edid;
+	struct edid *edid;
 	int ret;
 
-	drm_edid = drm_edid_read_ddc(connector, adapter);
-	if (!drm_edid)
+	edid = drm_get_edid(connector, adapter);
+	if (!edid)
 		return 0;
 
-	ret = intel_connector_update_modes(connector, drm_edid);
-	drm_edid_free(drm_edid);
+	ret = intel_connector_update_modes(connector, edid);
+	kfree(edid);
 
 	return ret;
 }
@@ -280,14 +280,22 @@ intel_attach_aspect_ratio_property(struct drm_connector *connector)
 void
 intel_attach_hdmi_colorspace_property(struct drm_connector *connector)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,5,0)
 	if (!drm_mode_create_hdmi_colorspace_property(connector, 0))
+#else
+	if (!drm_mode_create_hdmi_colorspace_property(connector))
+#endif
 		drm_connector_attach_colorspace_property(connector);
 }
 
 void
 intel_attach_dp_colorspace_property(struct drm_connector *connector)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,5,0)
 	if (!drm_mode_create_dp_colorspace_property(connector, 0))
+#else
+	if (!drm_mode_create_dp_colorspace_property(connector))
+#endif
 		drm_connector_attach_colorspace_property(connector);
 }
 

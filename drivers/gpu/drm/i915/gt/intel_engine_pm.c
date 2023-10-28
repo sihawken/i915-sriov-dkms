@@ -63,7 +63,7 @@ static int __engine_unpark(struct intel_wakeref *wf)
 
 	ENGINE_TRACE(engine, "\n");
 
-	intel_gt_pm_get(engine->gt);
+	engine->wakeref_track = intel_gt_pm_get(engine->gt);
 
 	/* Discard stale context state from across idling */
 	ce = engine->kernel_context;
@@ -114,14 +114,9 @@ __queue_and_release_pm(struct i915_request *rq,
 
 	ENGINE_TRACE(engine, "parking\n");
 
-	/*
-	 * Open coded one half of intel_context_enter, which we have to omit
-	 * here (see the large comment below) and because the other part must
-	 * not be called due constructing directly with __i915_request_create
-	 * which increments active count via intel_context_mark_active.
-	 */
 	GEM_BUG_ON(rq->context->active_count != 1);
 	__intel_gt_pm_get(engine->gt);
+	rq->context->wakeref = intel_wakeref_track(&engine->gt->wakeref);
 
 	/*
 	 * We have to serialise all potential retirement paths with our
@@ -285,7 +280,7 @@ static int __engine_park(struct intel_wakeref *wf)
 		engine->park(engine);
 
 	/* While gt calls i915_vma_parked(), we have to break the lock cycle */
-	intel_gt_pm_put_async(engine->gt);
+	intel_gt_pm_put_async(engine->gt, engine->wakeref_track);
 	return 0;
 }
 
@@ -296,7 +291,9 @@ static const struct intel_wakeref_ops wf_ops = {
 
 void intel_engine_init__pm(struct intel_engine_cs *engine)
 {
-	intel_wakeref_init(&engine->wakeref, engine->i915, &wf_ops);
+	struct intel_runtime_pm *rpm = engine->uncore->rpm;
+
+	intel_wakeref_init(&engine->wakeref, rpm, &wf_ops, engine->name);
 	intel_engine_init_heartbeat(engine);
 
 	intel_gsc_idle_msg_enable(engine);

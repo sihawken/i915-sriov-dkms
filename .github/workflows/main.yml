@@ -1,0 +1,30 @@
+name: Merge i915-sriov-dkms upstream
+on: 
+  schedule:
+    - cron: '0 0 * * 1'
+    # scheduled for 00:00 every Monday
+  workflow_dispatch:
+
+jobs:
+  merge-upstream:
+    runs-on: ubuntu-latest
+    steps: 
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          ref: master             # set the branch to merge to
+          fetch-depth: 0
+          useremail: ${{ github.event.inputs.useremail }}
+          username: ${{ github.event.inputs.usename }}
+          upstream: ${{ github.event.inputs.upstream }}
+          upstream-branch: ${{ github.event.inputs.upstream-branch }}
+          branch: ${{ github.event.inputs.branch }}
+          token: ${{ secrets.TOKEN }}
+      - name: Merge Upstream
+        uses: discdiver/merge-from-upstream-repo@v0.0.9
+        with:
+          upstream: strongtz/i915-sriov-dkms      # set the upstream repo
+          upstream-branch: master   # set the upstream branch to merge from
+          branch: master          # set the branch to merge to
+  webhook:
+

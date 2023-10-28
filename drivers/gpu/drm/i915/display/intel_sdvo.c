@@ -117,6 +117,9 @@ struct intel_sdvo {
 
 	enum port port;
 
+	bool has_hdmi_monitor;
+	bool has_hdmi_audio;
+
 	/* DDC bus used by this SDVO encoder */
 	u8 ddc_bus;
 
@@ -1300,13 +1303,10 @@ static void i9xx_adjust_sdvo_tv_clock(struct intel_crtc_state *pipe_config)
 	pipe_config->clock_set = true;
 }
 
-static bool intel_has_hdmi_sink(struct intel_sdvo_connector *intel_sdvo_connector,
+static bool intel_has_hdmi_sink(struct intel_sdvo *sdvo,
 				const struct drm_connector_state *conn_state)
 {
-	struct drm_connector *connector = conn_state->connector;
-
-	return intel_sdvo_connector->is_hdmi &&
-		connector->display_info.is_hdmi &&
+	return sdvo->has_hdmi_monitor &&
 		READ_ONCE(to_intel_digital_connector_state(conn_state)->force_audio) != HDMI_AUDIO_OFF_DVI;
 }
 
@@ -1326,9 +1326,7 @@ static bool intel_sdvo_has_audio(struct intel_encoder *encoder,
 				 const struct intel_crtc_state *crtc_state,
 				 const struct drm_connector_state *conn_state)
 {
-	struct drm_connector *connector = conn_state->connector;
-	struct intel_sdvo_connector *intel_sdvo_connector =
-		to_intel_sdvo_connector(connector);
+	struct intel_sdvo *intel_sdvo = to_sdvo(encoder);
 	const struct intel_digital_connector_state *intel_conn_state =
 		to_intel_digital_connector_state(conn_state);
 
@@ -1336,8 +1334,7 @@ static bool intel_sdvo_has_audio(struct intel_encoder *encoder,
 		return false;
 
 	if (intel_conn_state->force_audio == HDMI_AUDIO_AUTO)
-		return intel_sdvo_connector->is_hdmi &&
-			connector->display_info.has_audio;
+		return intel_sdvo->has_hdmi_audio;
 	else
 		return intel_conn_state->force_audio == HDMI_AUDIO_ON;
 }
@@ -1354,7 +1351,6 @@ static int intel_sdvo_compute_config(struct intel_encoder *encoder,
 
 	DRM_DEBUG_KMS("forcing bpc to 8 for SDVO\n");
 	pipe_config->pipe_bpp = 8*3;
-	pipe_config->sink_format = INTEL_OUTPUT_FORMAT_RGB;
 	pipe_config->output_format = INTEL_OUTPUT_FORMAT_RGB;
 
 	if (HAS_PCH_SPLIT(to_i915(encoder->base.dev)))
@@ -1404,7 +1400,7 @@ static int intel_sdvo_compute_config(struct intel_encoder *encoder,
 	pipe_config->pixel_multiplier =
 		intel_sdvo_get_pixel_multiplier(adjusted_mode);
 
-	pipe_config->has_hdmi_sink = intel_has_hdmi_sink(intel_sdvo_connector, conn_state);
+	pipe_config->has_hdmi_sink = intel_has_hdmi_sink(intel_sdvo, conn_state);
 
 	pipe_config->has_audio =
 		intel_sdvo_has_audio(encoder, pipe_config, conn_state) &&
@@ -1910,7 +1906,7 @@ intel_sdvo_mode_valid(struct drm_connector *connector,
 	struct intel_sdvo_connector *intel_sdvo_connector =
 		to_intel_sdvo_connector(connector);
 	int max_dotclk = to_i915(connector->dev)->max_dotclk_freq;
-	bool has_hdmi_sink = intel_has_hdmi_sink(intel_sdvo_connector, connector->state);
+	bool has_hdmi_sink = intel_has_hdmi_sink(intel_sdvo, connector->state);
 	int clock = mode->clock;
 
 	if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
@@ -2036,35 +2032,36 @@ intel_sdvo_multifunc_encoder(struct intel_sdvo *intel_sdvo)
 	return hweight16(intel_sdvo->caps.output_flags) > 1;
 }
 
-static const struct drm_edid *
+static struct edid *
 intel_sdvo_get_edid(struct drm_connector *connector)
 {
 	struct intel_sdvo *sdvo = intel_attached_sdvo(to_intel_connector(connector));
-	return drm_edid_read_ddc(connector, &sdvo->ddc);
+	return drm_get_edid(connector, &sdvo->ddc);
 }
 
 /* Mac mini hack -- use the same DDC as the analog connector */
-static const struct drm_edid *
+static struct edid *
 intel_sdvo_get_analog_edid(struct drm_connector *connector)
 {
-	struct drm_i915_private *i915 = to_i915(connector->dev);
-	struct i2c_adapter *i2c;
+	struct drm_i915_private *dev_priv = to_i915(connector->dev);
 
-	i2c = intel_gmbus_get_adapter(i915, i915->display.vbt.crt_ddc_pin);
-
-	return drm_edid_read_ddc(connector, i2c);
+	return drm_get_edid(connector,
+			    intel_gmbus_get_adapter(dev_priv,
+						    dev_priv->display.vbt.crt_ddc_pin));
 }
 
 static enum drm_connector_status
 intel_sdvo_tmds_sink_detect(struct drm_connector *connector)
 {
 	struct intel_sdvo *intel_sdvo = intel_attached_sdvo(to_intel_connector(connector));
+	struct intel_sdvo_connector *intel_sdvo_connector =
+		to_intel_sdvo_connector(connector);
 	enum drm_connector_status status;
-	const struct drm_edid *drm_edid;
+	struct edid *edid;
 
-	drm_edid = intel_sdvo_get_edid(connector);
+	edid = intel_sdvo_get_edid(connector);
 
-	if (!drm_edid && intel_sdvo_multifunc_encoder(intel_sdvo)) {
+	if (edid == NULL && intel_sdvo_multifunc_encoder(intel_sdvo)) {
 		u8 ddc, saved_ddc = intel_sdvo->ddc_bus;
 
 		/*
@@ -2073,15 +2070,15 @@ intel_sdvo_tmds_sink_detect(struct drm_connector *connector)
 		 */
 		for (ddc = intel_sdvo->ddc_bus >> 1; ddc > 1; ddc >>= 1) {
 			intel_sdvo->ddc_bus = ddc;
-			drm_edid = intel_sdvo_get_edid(connector);
-			if (drm_edid)
+			edid = intel_sdvo_get_edid(connector);
+			if (edid)
 				break;
 		}
 		/*
 		 * If we found the EDID on the other bus,
 		 * assume that is the correct DDC bus.
 		 */
-		if (!drm_edid)
+		if (edid == NULL)
 			intel_sdvo->ddc_bus = saved_ddc;
 	}
 
@@ -2089,19 +2086,21 @@ intel_sdvo_tmds_sink_detect(struct drm_connector *connector)
 	 * When there is no edid and no monitor is connected with VGA
 	 * port, try to use the CRT ddc to read the EDID for DVI-connector.
 	 */
-	if (!drm_edid)
-		drm_edid = intel_sdvo_get_analog_edid(connector);
+	if (edid == NULL)
+		edid = intel_sdvo_get_analog_edid(connector);
 
 	status = connector_status_unknown;
-	if (drm_edid) {
-		const struct edid *edid = drm_edid_raw(drm_edid);
-
+	if (edid != NULL) {
 		/* DDC bus is shared, match EDID to connector type */
-		if (edid->input & DRM_EDID_INPUT_DIGITAL)
+		if (edid->input & DRM_EDID_INPUT_DIGITAL) {
 			status = connector_status_connected;
-		else
+			if (intel_sdvo_connector->is_hdmi) {
+				intel_sdvo->has_hdmi_monitor = drm_detect_hdmi_monitor(edid);
+				intel_sdvo->has_hdmi_audio = drm_detect_monitor_audio(edid);
+			}
+		} else
 			status = connector_status_disconnected;
-		drm_edid_free(drm_edid);
+		kfree(edid);
 	}
 
 	return status;
@@ -2109,9 +2108,8 @@ intel_sdvo_tmds_sink_detect(struct drm_connector *connector)
 
 static bool
 intel_sdvo_connector_matches_edid(struct intel_sdvo_connector *sdvo,
-				  const struct drm_edid *drm_edid)
+				  struct edid *edid)
 {
-	const struct edid *edid = drm_edid_raw(drm_edid);
 	bool monitor_is_digital = !!(edid->input & DRM_EDID_INPUT_DIGITAL);
 	bool connector_is_digital = !!IS_DIGITAL(sdvo);
 
@@ -2149,28 +2147,30 @@ intel_sdvo_detect(struct drm_connector *connector, bool force)
 
 	intel_sdvo->attached_output = response;
 
+	intel_sdvo->has_hdmi_monitor = false;
+	intel_sdvo->has_hdmi_audio = false;
+
 	if ((intel_sdvo_connector->output_flag & response) == 0)
 		ret = connector_status_disconnected;
 	else if (IS_TMDS(intel_sdvo_connector))
 		ret = intel_sdvo_tmds_sink_detect(connector);
 	else {
-		const struct drm_edid *drm_edid;
+		struct edid *edid;
 
 		/* if we have an edid check it matches the connection */
-		drm_edid = intel_sdvo_get_edid(connector);
-		if (!drm_edid)
-			drm_edid = intel_sdvo_get_analog_edid(connector);
-		if (drm_edid) {
+		edid = intel_sdvo_get_edid(connector);
+		if (edid == NULL)
+			edid = intel_sdvo_get_analog_edid(connector);
+		if (edid != NULL) {
 			if (intel_sdvo_connector_matches_edid(intel_sdvo_connector,
-							      drm_edid))
+							      edid))
 				ret = connector_status_connected;
 			else
 				ret = connector_status_disconnected;
 
-			drm_edid_free(drm_edid);
-		} else {
+			kfree(edid);
+		} else
 			ret = connector_status_connected;
-		}
 	}
 
 	return ret;
@@ -2179,13 +2179,13 @@ intel_sdvo_detect(struct drm_connector *connector, bool force)
 static int intel_sdvo_get_ddc_modes(struct drm_connector *connector)
 {
 	int num_modes = 0;
-	const struct drm_edid *drm_edid;
+	struct edid *edid;
 
 	DRM_DEBUG_KMS("[CONNECTOR:%d:%s]\n",
 		      connector->base.id, connector->name);
 
 	/* set the bus switch and get the modes */
-	drm_edid = intel_sdvo_get_edid(connector);
+	edid = intel_sdvo_get_edid(connector);
 
 	/*
 	 * Mac mini hack.  On this device, the DVI-I connector shares one DDC
@@ -2193,17 +2193,17 @@ static int intel_sdvo_get_ddc_modes(struct drm_connector *connector)
 	 * DDC fails, check to see if the analog output is disconnected, in
 	 * which case we'll look there for the digital DDC data.
 	 */
-	if (!drm_edid)
-		drm_edid = intel_sdvo_get_analog_edid(connector);
+	if (!edid)
+		edid = intel_sdvo_get_analog_edid(connector);
 
-	if (!drm_edid)
+	if (!edid)
 		return 0;
 
 	if (intel_sdvo_connector_matches_edid(to_intel_sdvo_connector(connector),
-					      drm_edid))
-		num_modes += intel_connector_update_modes(connector, drm_edid);
+					      edid))
+		num_modes += intel_connector_update_modes(connector, edid);
 
-	drm_edid_free(drm_edid);
+	kfree(edid);
 
 	return num_modes;
 }
@@ -2752,7 +2752,7 @@ static struct intel_sdvo_connector *intel_sdvo_connector_alloc(void)
 	__drm_atomic_helper_connector_reset(&sdvo_connector->base.base,
 					    &conn_state->base.base);
 
-	intel_panel_init_alloc(&sdvo_connector->base);
+	INIT_LIST_HEAD(&sdvo_connector->base.panel.fixed_modes);
 
 	return sdvo_connector;
 }

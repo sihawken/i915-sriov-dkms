@@ -37,7 +37,6 @@ struct intel_uc {
 	struct drm_i915_gem_object *load_err_log;
 
 	bool reset_in_progress;
-	bool fw_table_invalid;
 };
 
 void intel_uc_init_early(struct intel_uc *uc);
@@ -76,7 +75,7 @@ int intel_uc_runtime_resume(struct intel_uc *uc);
  */
 
 #define __uc_state_checker(x, func, state, required) \
-static inline bool intel_uc_##state##_##func(struct intel_uc *uc) \
+static inline bool intel_uc_##state##_##func(const struct intel_uc *uc) \
 { \
 	return intel_##func##_is_##required(&uc->x); \
 }

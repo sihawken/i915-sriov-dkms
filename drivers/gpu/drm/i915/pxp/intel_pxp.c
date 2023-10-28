@@ -119,6 +119,7 @@ static void destroy_vcs_context(struct intel_pxp *pxp)
 static void pxp_init_full(struct intel_pxp *pxp)
 {
 	struct intel_gt *gt = pxp->ctrl_gt;
+	intel_wakeref_t wakeref;
 	int ret;
 
 	/*
@@ -140,10 +141,15 @@ static void pxp_init_full(struct intel_pxp *pxp)
 	if (ret)
 		return;
 
-	if (HAS_ENGINE(pxp->ctrl_gt, GSC0))
+	if (HAS_ENGINE(pxp->ctrl_gt, GSC0)) {
 		ret = intel_pxp_gsccs_init(pxp);
-	else
+		if (!ret) {
+			with_intel_runtime_pm(&pxp->ctrl_gt->i915->runtime_pm, wakeref)
+				intel_pxp_init_hw(pxp);
+		}
+	} else {
 		ret = intel_pxp_tee_component_init(pxp);
+	}
 	if (ret)
 		goto out_context;
 
@@ -177,11 +183,10 @@ static struct intel_gt *find_gt_for_required_protected_content(struct drm_i915_p
 	 * For MTL onwards, PXP-controller-GT needs to have a valid GSC engine
 	 * on the media GT. NOTE: if we have a media-tile with a GSC-engine,
 	 * the VDBOX is already present so skip that check. We also have to
-	 * ensure the GSC and HUC firmware are coming online
+	 * ensure the GSC firmware is coming online
 	 */
 	if (i915->media_gt && HAS_ENGINE(i915->media_gt, GSC0) &&
-	    intel_uc_fw_is_loadable(&i915->media_gt->uc.gsc.fw) &&
-	    intel_uc_fw_is_loadable(&i915->media_gt->uc.huc.fw))
+	    intel_uc_fw_is_loadable(&i915->media_gt->uc.gsc.fw))
 		return i915->media_gt;
 
 	/*
@@ -221,9 +226,7 @@ int intel_pxp_init(struct drm_i915_private *i915)
 	if (!i915->pxp)
 		return -ENOMEM;
 
-	/* init common info used by all feature-mode usages*/
 	i915->pxp->ctrl_gt = gt;
-	mutex_init(&i915->pxp->tee_mutex);
 
 	/*
 	 * If full PXP feature is not available but HuC is loaded by GSC on pre-MTL
@@ -240,15 +243,20 @@ int intel_pxp_init(struct drm_i915_private *i915)
 
 void intel_pxp_fini(struct drm_i915_private *i915)
 {
+	intel_wakeref_t wakeref;
+
 	if (!i915->pxp)
 		return;
 
 	i915->pxp->arb_is_valid = false;
 
-	if (HAS_ENGINE(i915->pxp->ctrl_gt, GSC0))
+	if (HAS_ENGINE(i915->pxp->ctrl_gt, GSC0)) {
+		with_intel_runtime_pm(&i915->pxp->ctrl_gt->i915->runtime_pm, wakeref)
+			intel_pxp_fini_hw(i915->pxp);
 		intel_pxp_gsccs_fini(i915->pxp);
-	else
+	} else {
 		intel_pxp_tee_component_fini(i915->pxp);
+	}
 
 	destroy_vcs_context(i915->pxp);
 
@@ -289,18 +297,8 @@ static bool pxp_component_bound(struct intel_pxp *pxp)
 	return bound;
 }
 
-int intel_pxp_get_backend_timeout_ms(struct intel_pxp *pxp)
-{
-	if (HAS_ENGINE(pxp->ctrl_gt, GSC0))
-		return GSCFW_MAX_ROUND_TRIP_LATENCY_MS;
-	else
-		return 250;
-}
-
 static int __pxp_global_teardown_final(struct intel_pxp *pxp)
 {
-	int timeout;
-
 	if (!pxp->arb_is_valid)
 		return 0;
 	/*
@@ -310,9 +308,7 @@ static int __pxp_global_teardown_final(struct intel_pxp *pxp)
 	intel_pxp_mark_termination_in_progress(pxp);
 	intel_pxp_terminate(pxp, false);
 
-	timeout = intel_pxp_get_backend_timeout_ms(pxp);
-
-	if (!wait_for_completion_timeout(&pxp->termination, msecs_to_jiffies(timeout)))
+	if (!wait_for_completion_timeout(&pxp->termination, msecs_to_jiffies(250)))
 		return -ETIMEDOUT;
 
 	return 0;
@@ -320,8 +316,6 @@ static int __pxp_global_teardown_final(struct intel_pxp *pxp)
 
 static int __pxp_global_teardown_restart(struct intel_pxp *pxp)
 {
-	int timeout;
-
 	if (pxp->arb_is_valid)
 		return 0;
 	/*
@@ -330,9 +324,7 @@ static int __pxp_global_teardown_restart(struct intel_pxp *pxp)
 	 */
 	pxp_queue_termination(pxp);
 
-	timeout = intel_pxp_get_backend_timeout_ms(pxp);
-
-	if (!wait_for_completion_timeout(&pxp->termination, msecs_to_jiffies(timeout)))
+	if (!wait_for_completion_timeout(&pxp->termination, msecs_to_jiffies(250)))
 		return -ETIMEDOUT;
 
 	return 0;
@@ -360,26 +352,6 @@ void intel_pxp_end(struct intel_pxp *pxp)
 }
 
 /*
- * this helper is used by both intel_pxp_start and by
- * the GET_PARAM IOCTL that user space calls. Thus, the
- * return values here should match the UAPI spec.
- */
-int intel_pxp_get_readiness_status(struct intel_pxp *pxp)
-{
-	if (!intel_pxp_is_enabled(pxp))
-		return -ENODEV;
-
-	if (HAS_ENGINE(pxp->ctrl_gt, GSC0)) {
-		if (wait_for(intel_pxp_gsccs_is_ready_for_sessions(pxp), 250))
-			return 2;
-	} else {
-		if (wait_for(pxp_component_bound(pxp), 250))
-			return 2;
-	}
-	return 1;
-}
-
-/*
  * the arb session is restarted from the irq work when we receive the
  * termination completion interrupt
  */
@@ -387,11 +359,18 @@ int intel_pxp_start(struct intel_pxp *pxp)
 {
 	int ret = 0;
 
-	ret = intel_pxp_get_readiness_status(pxp);
-	if (ret < 0)
-		return ret;
-	else if (ret > 1)
-		return -EIO; /* per UAPI spec, user may retry later */
+	if (!intel_pxp_is_enabled(pxp))
+		return -ENODEV;
+
+	if (HAS_ENGINE(pxp->ctrl_gt, GSC0)) {
+		if (wait_for(intel_huc_is_authenticated(&pxp->ctrl_gt->uc.huc,
+							INTEL_HUC_AUTH_BY_GSC),
+				 8000))
+			return -ENXIO;
+	} else {
+		if (wait_for(pxp_component_bound(pxp), 250))
+			return -ENXIO;
+	}
 
 	mutex_lock(&pxp->arb_mutex);
 

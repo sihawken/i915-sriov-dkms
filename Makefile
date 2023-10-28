@@ -37,11 +37,12 @@ EXTRA_CFLAGS += -DCONFIG_PM -DCONFIG_DEBUG_FS -DCONFIG_PNP -DCONFIG_PROC_FS \
 
 KBUILD_MODPOST_WARN = 1
 
-## core driver code
+# core driver code
 i915-y += i915_driver.o \
 	  i915_drm_client.o \
 	  i915_config.o \
 	  i915_getparam.o \
+	  i915_hwmon.o \
 	  i915_ioctl.o \
 	  i915_irq.o \
 	  i915_mitigations.o \
@@ -53,10 +54,10 @@ i915-y += i915_driver.o \
 	  i915_switcheroo.o \
 	  i915_sysfs.o \
 	  i915_utils.o \
-	  intel_clock_gating.o \
 	  intel_device_info.o \
 	  intel_memory_region.o \
 	  intel_pcode.o \
+	  intel_pm.o \
 	  intel_region_ttm.o \
 	  intel_runtime_pm.o \
 	  intel_sbi.o \
@@ -87,6 +88,7 @@ i915-$(CONFIG_DEBUG_FS) += \
 	i915_debugfs_params.o \
 	display/intel_display_debugfs.o \
 	display/intel_pipe_crc.o
+
 i915-$(CONFIG_PERF_EVENTS) += i915_pmu.o
 
 # "Graphics Technology" (aka we talk to the gpu)
@@ -137,6 +139,7 @@ gt-y += \
 	gt/intel_sseu.o \
 	gt/intel_sseu_debugfs.o \
 	gt/intel_timeline.o \
+	gt/intel_tlb.o \
 	gt/intel_wopcm.o \
 	gt/intel_workarounds.o \
 	gt/shmem_utils.o \
@@ -202,7 +205,7 @@ i915-y += \
 	  gt/uc/intel_gsc_fw.o \
 	  gt/uc/intel_gsc_proxy.o \
 	  gt/uc/intel_gsc_uc.o \
-	  gt/uc/intel_gsc_uc_heci_cmd_submit.o\
+	  gt/uc/intel_gsc_uc_heci_cmd_submit.o \
 	  gt/uc/intel_guc.o \
 	  gt/uc/intel_guc_ads.o \
 	  gt/uc/intel_guc_capture.o \
@@ -225,8 +228,21 @@ i915-y += \
 # graphics system controller (GSC) support
 i915-y += gt/intel_gsc.o
 
-# graphics hardware monitoring (HWMON) support
-i915-$(CONFIG_HWMON) += i915_hwmon.o
+# Virtualization support
+iov-y += \
+	i915_sriov.o \
+	i915_sriov_sysfs.o \
+	gt/iov/intel_iov.o \
+	gt/iov/intel_iov_debugfs.o \
+	gt/iov/intel_iov_event.o \
+	gt/iov/intel_iov_memirq.o \
+	gt/iov/intel_iov_provisioning.o \
+	gt/iov/intel_iov_query.o \
+	gt/iov/intel_iov_relay.o \
+	gt/iov/intel_iov_service.o \
+	gt/iov/intel_iov_state.o \
+	gt/iov/intel_iov_sysfs.o
+i915-y += $(iov-y)
 
 # modesetting core code
 i915-y += \
@@ -244,13 +260,9 @@ i915-y += \
 	display/intel_crtc_state_dump.o \
 	display/intel_cursor.o \
 	display/intel_display.o \
-	display/intel_display_driver.o \
-	display/intel_display_irq.o \
 	display/intel_display_power.o \
 	display/intel_display_power_map.o \
 	display/intel_display_power_well.o \
-	display/intel_display_reset.o \
-	display/intel_display_rps.o \
 	display/intel_dmc.o \
 	display/intel_dpio_phy.o \
 	display/intel_dpll.o \
@@ -266,30 +278,22 @@ i915-y += \
 	display/intel_frontbuffer.o \
 	display/intel_global_state.o \
 	display/intel_hdcp.o \
-	display/intel_hdcp_gsc.o \
 	display/intel_hotplug.o \
-	display/intel_hotplug_irq.o \
 	display/intel_hti.o \
-	display/intel_load_detect.o \
 	display/intel_lpe_audio.o \
-	display/intel_modeset_lock.o \
 	display/intel_modeset_verify.o \
 	display/intel_modeset_setup.o \
 	display/intel_overlay.o \
 	display/intel_pch_display.o \
 	display/intel_pch_refclk.o \
 	display/intel_plane_initial.o \
-	display/intel_pmdemand.o \
 	display/intel_psr.o \
 	display/intel_quirks.o \
 	display/intel_sprite.o \
-	display/intel_sprite_uapi.o \
 	display/intel_tc.o \
 	display/intel_vblank.o \
 	display/intel_vga.o \
-	display/intel_wm.o \
 	display/i9xx_plane.o \
-	display/i9xx_wm.o \
 	display/skl_scaler.o \
 	display/skl_universal_plane.o \
 	display/skl_watermark.o
@@ -315,7 +319,6 @@ i915-y += \
 	display/intel_cx0_phy.o \
 	display/intel_ddi.o \
 	display/intel_ddi_buf_trans.o \
-	display/intel_display_device.o \
 	display/intel_display_trace.o \
 	display/intel_dkl_phy.o \
 	display/intel_dp.o \
@@ -345,7 +348,7 @@ i915-y += \
 
 i915-y += i915_perf.o
 
-# Protected execution platform (PXP) support. Base support is required for HuC
+# Protected execution platform (PXP) support
 i915-y += \
 	pxp/intel_pxp.o \
 	pxp/intel_pxp_tee.o \
@@ -382,8 +385,7 @@ i915-$(CONFIG_DRM_I915_GVT) += \
 	intel_gvt.o \
 	intel_gvt_mmio_table.o
 
-obj-$(CONFIG_DRM_I915) += i915.o
-obj-$(CONFIG_DRM_I915_GVT_KVMGT) += kvmgt.o
+obj-$(CONFIG_DRM_I915)           += i915.o
 
 CFLAGS_i915_trace_points.o := -I$(KBUILD_EXTMOD)/drivers/gpu/drm/i915
 

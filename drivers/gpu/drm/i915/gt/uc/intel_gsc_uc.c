@@ -6,7 +6,6 @@
 #include <linux/types.h>
 
 #include "gt/intel_gt.h"
-#include "gt/intel_gt_print.h"
 #include "intel_gsc_uc.h"
 #include "intel_gsc_fw.h"
 #include "i915_drv.h"
@@ -21,6 +20,11 @@ static void gsc_work(struct work_struct *work)
 	int ret;
 
 	wakeref = intel_runtime_pm_get(gt->uncore->rpm);
+	if (!wakeref) {
+		drm_err(&gt->i915->drm,
+			"Can't run GSC work due to failure to resume!\n");
+		return;
+	}
 
 	spin_lock_irq(gt->irq_lock);
 	actions = gsc->gsc_work_actions;
@@ -46,17 +50,17 @@ static void gsc_work(struct work_struct *work)
 		 * first and do proxy later. The GSC will ack the HuC auth and
 		 * then send the HuC proxy request as part of the proxy init
 		 * flow.
-		 * Note that we can only do the GSC auth if the GuC auth was
-		 * successful.
 		 */
-		if (intel_uc_uses_huc(&gt->uc) &&
-		    intel_huc_is_authenticated(&gt->uc.huc, INTEL_HUC_AUTH_BY_GUC))
+		if (intel_huc_is_loaded_by_gsc(&gt->uc.huc))
+			intel_huc_fw_load_and_auth_via_gsc_cs(&gt->uc.huc);
+		else
 			intel_huc_auth(&gt->uc.huc, INTEL_HUC_AUTH_BY_GSC);
 	}
 
 	if (actions & GSC_ACTION_SW_PROXY) {
 		if (!intel_gsc_uc_fw_init_done(gsc)) {
-			gt_err(gt, "Proxy request received with GSC not loaded!\n");
+			drm_err(&gt->i915->drm,
+				"Proxy request received with GSC not loaded!\n");
 			goto out_put;
 		}
 
@@ -66,18 +70,9 @@ static void gsc_work(struct work_struct *work)
 
 		/* mark the GSC FW init as done the first time we run this */
 		if (actions & GSC_ACTION_FW_LOAD) {
-			/*
-			 * If there is a proxy establishment error, the GSC might still
-			 * complete the request handling cleanly, so we need to check the
-			 * status register to check if the proxy init was actually successful
-			 */
-			if (intel_gsc_uc_fw_proxy_init_done(gsc)) {
-				drm_dbg(&gt->i915->drm, "GSC Proxy initialized\n");
-				intel_uc_fw_change_status(&gsc->fw, INTEL_UC_FIRMWARE_RUNNING);
-			} else {
-				drm_err(&gt->i915->drm,
-					"GSC status reports proxy init not complete\n");
-			}
+			drm_dbg(&gt->i915->drm,
+				"GSC Proxy initialized\n");
+			intel_uc_fw_change_status(&gsc->fw, INTEL_UC_FIRMWARE_RUNNING);
 		}
 	}
 
@@ -128,7 +123,8 @@ void intel_gsc_uc_init_early(struct intel_gsc_uc *gsc)
 
 	gsc->wq = alloc_ordered_workqueue("i915_gsc", 0);
 	if (!gsc->wq) {
-		gt_err(gt, "failed to allocate WQ for GSC, disabling FW\n");
+		drm_err(&gt->i915->drm,
+			"failed to allocate WQ for GSC, disabling FW\n");
 		intel_uc_fw_change_status(&gsc->fw, INTEL_UC_FIRMWARE_NOT_SUPPORTED);
 	}
 }
@@ -137,6 +133,7 @@ int intel_gsc_uc_init(struct intel_gsc_uc *gsc)
 {
 	static struct lock_class_key gsc_lock;
 	struct intel_gt *gt = gsc_uc_to_gt(gsc);
+	struct drm_i915_private *i915 = gt->i915;
 	struct intel_engine_cs *engine = gt->engine[GSC0];
 	struct intel_context *ce;
 	struct i915_vma *vma;
@@ -158,7 +155,8 @@ int intel_gsc_uc_init(struct intel_gsc_uc *gsc)
 						I915_GEM_HWS_GSC_ADDR,
 						&gsc_lock, "gsc_context");
 	if (IS_ERR(ce)) {
-		gt_err(gt, "failed to create GSC CS ctx for FW communication\n");
+		drm_err(&gt->i915->drm,
+			"failed to create GSC CS ctx for FW communication\n");
 		err =  PTR_ERR(ce);
 		goto out_vma;
 	}
@@ -177,7 +175,7 @@ out_vma:
 out_fw:
 	intel_uc_fw_fini(&gsc->fw);
 out:
-	gt_probe_error(gt, "GSC init failed %pe\n", ERR_PTR(err));
+	i915_probe_error(i915, "failed with %d\n", err);
 	return err;
 }
 

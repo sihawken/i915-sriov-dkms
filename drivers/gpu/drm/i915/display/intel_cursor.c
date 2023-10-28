@@ -21,6 +21,7 @@
 #include "intel_fb_pin.h"
 #include "intel_frontbuffer.h"
 #include "intel_psr.h"
+#include "intel_sprite.h"
 #include "skl_watermark.h"
 
 /* Cursor formats */
@@ -36,7 +37,7 @@ static u32 intel_cursor_base(const struct intel_plane_state *plane_state)
 	const struct drm_i915_gem_object *obj = intel_fb_obj(fb);
 	u32 base;
 
-	if (DISPLAY_INFO(dev_priv)->cursor_needs_physical)
+	if (INTEL_INFO(dev_priv)->display.cursor_needs_physical)
 		base = sg_dma_address(obj->mm.pages->sgl);
 	else
 		base = intel_plane_ggtt_offset(plane_state);
@@ -814,7 +815,7 @@ intel_cursor_plane_create(struct drm_i915_private *dev_priv,
 						   DRM_MODE_ROTATE_0 |
 						   DRM_MODE_ROTATE_180);
 
-	zpos = DISPLAY_RUNTIME_INFO(dev_priv)->num_sprites[pipe] + 1;
+	zpos = RUNTIME_INFO(dev_priv)->num_sprites[pipe] + 1;
 	drm_plane_create_zpos_immutable_property(&cursor->base, zpos);
 
 	if (DISPLAY_VER(dev_priv) >= 12)

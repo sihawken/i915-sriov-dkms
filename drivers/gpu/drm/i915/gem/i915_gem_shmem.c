@@ -18,6 +18,7 @@
 #include "i915_scatterlist.h"
 #include "i915_trace.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,5,0)
 /*
  * Move folios to appropriate lru and release the batch, decrementing the
  * ref count of those folios.
@@ -59,6 +60,44 @@ void shmem_sg_free_table(struct sg_table *st, struct address_space *mapping,
 
 	sg_free_table(st);
 }
+#else
+/*
+ * Move pages to appropriate lru and release the pagevec, decrementing the
+ * ref count of those pages.
+ */
+static void check_release_pagevec(struct pagevec *pvec)
+{
+	check_move_unevictable_pages(pvec);
+	__pagevec_release(pvec);
+	cond_resched();
+}
+
+void shmem_sg_free_table(struct sg_table *st, struct address_space *mapping,
+			 bool dirty, bool backup)
+{
+	struct sgt_iter sgt_iter;
+	struct pagevec pvec;
+	struct page *page;
+
+	mapping_clear_unevictable(mapping);
+
+	pagevec_init(&pvec);
+	for_each_sgt_page(page, sgt_iter, st) {
+		if (dirty)
+			set_page_dirty(page);
+
+		if (backup)
+			mark_page_accessed(page);
+
+		if (!pagevec_add(&pvec, page))
+			check_release_pagevec(&pvec);
+	}
+	if (pagevec_count(&pvec))
+		check_release_pagevec(&pvec);
+
+	sg_free_table(st);
+}
+#endif
 
 int shmem_sg_alloc_table(struct drm_i915_private *i915, struct sg_table *st,
 			 size_t size, struct intel_memory_region *mr,
@@ -68,7 +107,8 @@ int shmem_sg_alloc_table(struct drm_i915_private *i915, struct sg_table *st,
 	unsigned int page_count; /* restricted by sg_alloc_table */
 	unsigned long i;
 	struct scatterlist *sg;
-	unsigned long next_pfn = 0;	/* suppress gcc warning */
+	struct page *page;
+	unsigned long last_pfn = 0;	/* suppress gcc warning */
 	gfp_t noreclaim;
 	int ret;
 
@@ -99,7 +139,6 @@ int shmem_sg_alloc_table(struct drm_i915_private *i915, struct sg_table *st,
 	sg = st->sgl;
 	st->nents = 0;
 	for (i = 0; i < page_count; i++) {
-		struct folio *folio;
 		const unsigned int shrink[] = {
 			I915_SHRINK_BOUND | I915_SHRINK_UNBOUND,
 			0,
@@ -108,12 +147,12 @@ int shmem_sg_alloc_table(struct drm_i915_private *i915, struct sg_table *st,
 
 		do {
 			cond_resched();
-			folio = shmem_read_folio_gfp(mapping, i, gfp);
-			if (!IS_ERR(folio))
+			page = shmem_read_mapping_page_gfp(mapping, i, gfp);
+			if (!IS_ERR(page))
 				break;
 
 			if (!*s) {
-				ret = PTR_ERR(folio);
+				ret = PTR_ERR(page);
 				goto err_sg;
 			}
 
@@ -152,21 +191,19 @@ int shmem_sg_alloc_table(struct drm_i915_private *i915, struct sg_table *st,
 
 		if (!i ||
 		    sg->length >= max_segment ||
-		    folio_pfn(folio) != next_pfn) {
+		    page_to_pfn(page) != last_pfn + 1) {
 			if (i)
 				sg = sg_next(sg);
 
 			st->nents++;
-			sg_set_folio(sg, folio, folio_size(folio), 0);
+			sg_set_page(sg, page, PAGE_SIZE, 0);
 		} else {
-			/* XXX: could overflow? */
-			sg->length += folio_size(folio);
+			sg->length += PAGE_SIZE;
 		}
-		next_pfn = folio_pfn(folio) + folio_nr_pages(folio);
-		i += folio_nr_pages(folio) - 1;
+		last_pfn = page_to_pfn(page);
 
 		/* Check that the i965g/gm workaround works. */
-		GEM_BUG_ON(gfp & __GFP_DMA32 && next_pfn >= 0x00100000UL);
+		GEM_BUG_ON(gfp & __GFP_DMA32 && last_pfn >= 0x00100000UL);
 	}
 	if (sg) /* loop terminated early; short sg table */
 		sg_mark_end(sg);
@@ -462,7 +499,7 @@ shmem_pwrite(struct drm_i915_gem_object *obj,
 		struct page *page;
 		void *data, *vaddr;
 		int err;
-		char __maybe_unused c;
+		char c;
 
 		len = PAGE_SIZE - pg;
 		if (len > remain)
@@ -609,11 +646,9 @@ static int shmem_object_init(struct intel_memory_region *mem,
 	obj->read_domains = I915_GEM_DOMAIN_CPU;
 
 	/*
-	 * MTL doesn't snoop CPU cache by default for GPU access (namely
-	 * 1-way coherency). However some UMD's are currently depending on
-	 * that. Make 1-way coherent the default setting for MTL. A follow
-	 * up patch will extend the GEM_CREATE uAPI to allow UMD's specify
-	 * caching mode at BO creation time
+	 * Soft-pinned buffers need to be 1-way coherent from MTL onward
+	 * because GPU is no longer snooping CPU cache by default. Make it
+	 * default setting and let others to modify as needed later
 	 */
 	if (HAS_LLC(i915) || (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 70)))
 		/* On some devices, we can have the GPU use the LLC (the CPU

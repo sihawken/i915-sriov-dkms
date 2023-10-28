@@ -58,11 +58,12 @@ bool i915_gem_object_has_cache_level(const struct drm_i915_gem_object *obj,
 				     enum i915_cache_level lvl)
 {
 	/*
-	 * In case the pat_index is set by user space, this kernel mode
-	 * driver should leave the coherency to be managed by user space,
-	 * simply return true here.
+	 * cache_level == I915_CACHE_INVAL indicates the UMD's have set the
+	 * caching policy through pat_index, in which case the KMD should
+	 * leave the coherency to be managed by user space, simply return
+	 * true here.
 	 */
-	if (obj->pat_set_by_user)
+	if (obj->cache_level == I915_CACHE_INVAL)
 		return true;
 
 	/*
@@ -211,7 +212,7 @@ bool i915_gem_object_can_bypass_llc(struct drm_i915_gem_object *obj)
 	/*
 	 * Always flush cache for UMD objects at creation time.
 	 */
-	if (obj->pat_set_by_user)
+	if (obj->cache_level == I915_CACHE_INVAL)
 		return true;
 
 	/*
@@ -939,7 +940,7 @@ int i915_gem_object_wait_moving_fence(struct drm_i915_gem_object *obj,
 	return ret < 0 ? ret : 0;
 }
 
-/*
+/**
  * i915_gem_object_has_unknown_state - Return true if the object backing pages are
  * in an unknown_state. This means that userspace must NEVER be allowed to touch
  * the pages, with either the GPU or CPU.

@@ -535,12 +535,8 @@ static int i915_gem_init_stolen(struct intel_memory_region *mem)
 	/* Basic memrange allocator for stolen space. */
 	drm_mm_init(&i915->mm.stolen, 0, i915->dsm.usable_size);
 
-	/*
-	 * Access to stolen lmem beyond certain size for MTL A0 stepping
-	 * would crash the machine. Disable stolen lmem for userspace access
-	 * by setting usable_size to zero.
-	 */
-	if (IS_METEORLAKE(i915) && INTEL_REVID(i915) == 0x0)
+	if (IS_MTL_GRAPHICS_STEP(i915, M, STEP_A0, STEP_B0) ||
+	    IS_MTL_GRAPHICS_STEP(i915, P, STEP_A0, STEP_B0))
 		i915->dsm.usable_size = 0;
 
 	return 0;
@@ -900,9 +896,8 @@ i915_gem_stolen_lmem_setup(struct drm_i915_private *i915, u16 type,
 	if (HAS_LMEMBAR_SMEM_STOLEN(i915)) {
 		/*
 		 * MTL dsm size is in GGC register.
-		 * Also MTL uses offset to GSMBASE in ptes, so i915
-		 * uses dsm_base = 8MBs to setup stolen region, since
-		 * DSMBASE = GSMBASE + 8MB.
+		 * Also MTL uses offset to DSMBASE in ptes, so i915
+		 * uses dsm_base = 0 to setup stolen region.
 		 */
 		ret = mtl_get_gms_size(uncore);
 		if (ret < 0) {
@@ -910,11 +905,11 @@ i915_gem_stolen_lmem_setup(struct drm_i915_private *i915, u16 type,
 			return ERR_PTR(ret);
 		}
 
-		dsm_base = SZ_8M;
+		dsm_base = 0;
 		dsm_size = (resource_size_t)(ret * SZ_1M);
 
 		GEM_BUG_ON(pci_resource_len(pdev, GEN12_LMEM_BAR) != SZ_256M);
-		GEM_BUG_ON((dsm_base + dsm_size) > lmem_size);
+		GEM_BUG_ON((dsm_size + SZ_8M) > lmem_size);
 	} else {
 		/* Use DSM base address instead for stolen memory */
 		dsm_base = intel_uncore_read64(uncore, GEN12_DSMBASE) & GEN12_BDSM_MASK;
@@ -923,12 +918,14 @@ i915_gem_stolen_lmem_setup(struct drm_i915_private *i915, u16 type,
 		dsm_size = ALIGN_DOWN(lmem_size - dsm_base, SZ_1M);
 	}
 
-	if (pci_resource_len(pdev, GEN12_LMEM_BAR) < lmem_size) {
+	io_size = dsm_size;
+	if (HAS_LMEMBAR_SMEM_STOLEN(i915)) {
+		io_start = pci_resource_start(pdev, GEN12_LMEM_BAR) + SZ_8M;
+	} else if (pci_resource_len(pdev, GEN12_LMEM_BAR) < lmem_size) {
 		io_start = 0;
 		io_size = 0;
 	} else {
 		io_start = pci_resource_start(pdev, GEN12_LMEM_BAR) + dsm_base;
-		io_size = dsm_size;
 	}
 
 	min_page_size = HAS_64K_PAGES(i915) ? I915_GTT_PAGE_SIZE_64K :

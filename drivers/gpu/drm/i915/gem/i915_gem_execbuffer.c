@@ -8,6 +8,7 @@
 #include <linux/highmem.h>
 #include <linux/sync_file.h>
 #include <linux/uaccess.h>
+#include <linux/version.h>
 
 #include <drm/drm_syncobj.h>
 
@@ -253,6 +254,7 @@ struct i915_execbuffer {
 	struct intel_gt *gt; /* gt for the execbuf */
 	struct intel_context *context; /* logical state for the request */
 	struct i915_gem_context *gem_context; /** caller's context */
+	intel_wakeref_t wakeref;
 
 	/** our requests to build */
 	struct i915_request *requests[MAX_ENGINE_INSTANCE + 1];
@@ -640,12 +642,6 @@ static inline int use_cpu_reloc(const struct reloc_cache *cache,
 	if (DBG_FORCE_RELOC == FORCE_GTT_RELOC)
 		return false;
 
-	/*
-	 * For objects created by userspace through GEM_CREATE with pat_index
-	 * set by set_pat extension, i915_gem_object_has_cache_level() always
-	 * return true, otherwise the call would fall back to checking whether
-	 * the object is un-cached.
-	 */
 	return (cache->has_llc ||
 		obj->cache_dirty ||
 		!i915_gem_object_has_cache_level(obj, I915_CACHE_NONE));
@@ -736,6 +732,7 @@ static int eb_reserve(struct i915_execbuffer *eb)
 	struct eb_vma *ev;
 	unsigned int pass;
 	int err = 0;
+	bool unpinned;
 
 	/*
 	 * We have one more buffers that we couldn't bind, which could be due to
@@ -775,7 +772,7 @@ static int eb_reserve(struct i915_execbuffer *eb)
 			pin_flags |= PIN_NONBLOCK;
 
 		if (pass >= 1)
-			eb_unbind(eb, pass >= 2);
+			unpinned = eb_unbind(eb, pass >= 2);
 
 		if (pass == 2) {
 			err = mutex_lock_interruptible(&eb->context->vm->mutex);
@@ -1328,11 +1325,10 @@ static void *reloc_iomap(struct i915_vma *batch,
 	offset = cache->node.start;
 	if (drm_mm_node_allocated(&cache->node)) {
 		ggtt->vm.insert_page(&ggtt->vm,
-				     i915_gem_object_get_dma_address(obj, page),
-				     offset,
-				     i915_gem_get_pat_index(ggtt->vm.i915,
-							    I915_CACHE_NONE),
-				     0);
+			i915_gem_object_get_dma_address(obj, page),
+			offset,
+			i915_gem_get_pat_index(ggtt->vm.i915, I915_CACHE_NONE),
+			0);
 	} else {
 		offset += page << PAGE_SHIFT;
 	}
@@ -2457,6 +2453,11 @@ static int eb_submit(struct i915_execbuffer *eb)
 	return err;
 }
 
+static int num_vcs_engines(struct drm_i915_private *i915)
+{
+	return hweight_long(VDBOX_MASK(to_gt(i915)));
+}
+
 /*
  * Find one BSD ring to dispatch the corresponding BSD command.
  * The engine index is returned.
@@ -2470,7 +2471,11 @@ gen8_dispatch_bsd_engine(struct drm_i915_private *dev_priv,
 	/* Check whether the file_priv has already selected one ring. */
 	if ((int)file_priv->bsd_engine < 0)
 		file_priv->bsd_engine =
-			get_random_u32_below(dev_priv->engine_uabi_class_count[I915_ENGINE_CLASS_VIDEO]);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,6)
+			get_random_u32_below(num_vcs_engines(dev_priv));
+#else
+			prandom_u32_max(num_vcs_engines(dev_priv));
+#endif
 
 	return file_priv->bsd_engine;
 }
@@ -2658,8 +2663,7 @@ eb_select_legacy_ring(struct i915_execbuffer *eb)
 		return -1;
 	}
 
-	if (user_ring_id == I915_EXEC_BSD &&
-	    i915->engine_uabi_class_count[I915_ENGINE_CLASS_VIDEO] > 1) {
+	if (user_ring_id == I915_EXEC_BSD && num_vcs_engines(i915) > 1) {
 		unsigned int bsd_idx = args->flags & I915_EXEC_BSD_MASK;
 
 		if (bsd_idx == I915_EXEC_BSD_DEFAULT) {
@@ -2717,7 +2721,7 @@ eb_select_engine(struct i915_execbuffer *eb)
 
 	for_each_child(ce, child)
 		intel_context_get(child);
-	intel_gt_pm_get(ce->engine->gt);
+	eb->wakeref = intel_gt_pm_get(ce->engine->gt);
 
 	if (!test_bit(CONTEXT_ALLOC_BIT, &ce->flags)) {
 		err = intel_context_alloc_state(ce);
@@ -2756,7 +2760,7 @@ eb_select_engine(struct i915_execbuffer *eb)
 	return err;
 
 err:
-	intel_gt_pm_put(ce->engine->gt);
+	intel_gt_pm_put(ce->engine->gt, eb->wakeref);
 	for_each_child(ce, child)
 		intel_context_put(child);
 	intel_context_put(ce);
@@ -2769,7 +2773,7 @@ eb_put_engine(struct i915_execbuffer *eb)
 	struct intel_context *child;
 
 	i915_vm_put(eb->context->vm);
-	intel_gt_pm_put(eb->gt);
+	intel_gt_pm_put(eb->context->engine->gt, eb->wakeref);
 	for_each_child(eb->context, child)
 		intel_context_put(child);
 	intel_context_put(eb->context);
