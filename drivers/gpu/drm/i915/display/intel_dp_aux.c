@@ -14,7 +14,7 @@
 #include "intel_pps.h"
 #include "intel_tc.h"
 
-u32 intel_dp_aux_pack(const u8 *src, int src_bytes)
+static u32 intel_dp_aux_pack(const u8 *src, int src_bytes)
 {
 	int i;
 	u32 v = 0;

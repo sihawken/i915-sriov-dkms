@@ -11,6 +11,7 @@
 #include "intel_dpio_phy.h"
 
 struct drm_i915_private;
+struct i915_power_well;
 struct i915_power_well_ops;
 struct intel_encoder;
 

@@ -16,7 +16,7 @@
 #include "intel_display_reg_defs.h"
 #include "intel_fbc.h"
 
-const struct intel_display_device_info no_display = {};
+static const struct intel_display_device_info no_display = {};
 
 #define PIPE_A_OFFSET		0x70000
 #define PIPE_B_OFFSET		0x71000
@@ -184,6 +184,10 @@ const struct intel_display_device_info no_display = {};
 	.__runtime_defaults.cpu_transcoder_mask = \
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B)
 
+static const struct intel_display_device_info i830_display = {
+	I830_DISPLAY,
+};
+
 #define I845_DISPLAY \
 	.has_overlay = 1, \
 	.overlay_needs_physical = 1, \
@@ -196,29 +200,19 @@ const struct intel_display_device_info no_display = {};
 	.__runtime_defaults.pipe_mask = BIT(PIPE_A), \
 	.__runtime_defaults.cpu_transcoder_mask = BIT(TRANSCODER_A)
 
-static const struct intel_display_device_info i830_display = {
-	I830_DISPLAY,
-
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C), /* DVO A/B/C */
-};
-
 static const struct intel_display_device_info i845_display = {
 	I845_DISPLAY,
-
-	.__runtime_defaults.port_mask = BIT(PORT_B) | BIT(PORT_C), /* DVO B/C */
 };
 
 static const struct intel_display_device_info i85x_display = {
 	I830_DISPLAY,
 
-	.__runtime_defaults.port_mask = BIT(PORT_B) | BIT(PORT_C), /* DVO B/C */
 	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),
 };
 
 static const struct intel_display_device_info i865g_display = {
 	I845_DISPLAY,
 
-	.__runtime_defaults.port_mask = BIT(PORT_B) | BIT(PORT_C), /* DVO B/C */
 	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),
 };
 
@@ -231,8 +225,7 @@ static const struct intel_display_device_info i865g_display = {
 	.__runtime_defaults.ip.ver = 3, \
 	.__runtime_defaults.pipe_mask = BIT(PIPE_A) | BIT(PIPE_B), \
 	.__runtime_defaults.cpu_transcoder_mask = \
-		BIT(TRANSCODER_A) | BIT(TRANSCODER_B), \
-	.__runtime_defaults.port_mask = BIT(PORT_B) | BIT(PORT_C) /* SDVO B/C */
+		BIT(TRANSCODER_A) | BIT(TRANSCODER_B)
 
 static const struct intel_display_device_info i915g_display = {
 	GEN3_DISPLAY,
@@ -297,8 +290,6 @@ static const struct intel_display_device_info pnv_display = {
 static const struct intel_display_device_info i965g_display = {
 	GEN4_DISPLAY,
 	.has_overlay = 1,
-
-	.__runtime_defaults.port_mask = BIT(PORT_B) | BIT(PORT_C), /* SDVO B/C */
 };
 
 static const struct intel_display_device_info i965gm_display = {
@@ -306,21 +297,17 @@ static const struct intel_display_device_info i965gm_display = {
 	.has_overlay = 1,
 	.supports_tv = 1,
 
-	.__runtime_defaults.port_mask = BIT(PORT_B) | BIT(PORT_C), /* SDVO B/C */
 	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),
 };
 
 static const struct intel_display_device_info g45_display = {
 	GEN4_DISPLAY,
-
-	.__runtime_defaults.port_mask = BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D), /* SDVO/HDMI/DP B/C, DP D */
 };
 
 static const struct intel_display_device_info gm45_display = {
 	GEN4_DISPLAY,
 	.supports_tv = 1,
 
-	.__runtime_defaults.port_mask = BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D), /* SDVO/HDMI/DP B/C, DP D */
 	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),
 };
 
@@ -333,8 +320,7 @@ static const struct intel_display_device_info gm45_display = {
 	.__runtime_defaults.ip.ver = 5, \
 	.__runtime_defaults.pipe_mask = BIT(PIPE_A) | BIT(PIPE_B), \
 	.__runtime_defaults.cpu_transcoder_mask = \
-		BIT(TRANSCODER_A) | BIT(TRANSCODER_B), \
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D) /* DP A, SDVO/HDMI/DP B, HDMI/DP C/D */
+		BIT(TRANSCODER_A) | BIT(TRANSCODER_B)
 
 static const struct intel_display_device_info ilk_d_display = {
 	ILK_DISPLAY,
@@ -356,7 +342,6 @@ static const struct intel_display_device_info snb_display = {
 	.__runtime_defaults.pipe_mask = BIT(PIPE_A) | BIT(PIPE_B),
 	.__runtime_defaults.cpu_transcoder_mask =
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B),
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D), /* DP A, SDVO/HDMI/DP B, HDMI/DP C/D */
 	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),
 };
 
@@ -370,7 +355,6 @@ static const struct intel_display_device_info ivb_display = {
 	.__runtime_defaults.pipe_mask = BIT(PIPE_A) | BIT(PIPE_B) | BIT(PIPE_C),
 	.__runtime_defaults.cpu_transcoder_mask =
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) | BIT(TRANSCODER_C),
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D), /* DP A, SDVO/HDMI/DP B, HDMI/DP C/D */
 	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),
 };
 
@@ -386,7 +370,6 @@ static const struct intel_display_device_info vlv_display = {
 	.__runtime_defaults.pipe_mask = BIT(PIPE_A) | BIT(PIPE_B),
 	.__runtime_defaults.cpu_transcoder_mask =
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B),
-	.__runtime_defaults.port_mask = BIT(PORT_B) | BIT(PORT_C), /* HDMI/DP B/C */
 };
 
 static const struct intel_display_device_info hsw_display = {
@@ -394,8 +377,6 @@ static const struct intel_display_device_info hsw_display = {
 	.has_dp_mst = 1,
 	.has_fpga_dbg = 1,
 	.has_hotplug = 1,
-	.has_psr = 1,
-	.has_psr_hw_tracking = 1,
 	HSW_PIPE_OFFSETS,
 	IVB_CURSOR_OFFSETS,
 	IVB_COLORS,
@@ -405,7 +386,6 @@ static const struct intel_display_device_info hsw_display = {
 	.__runtime_defaults.cpu_transcoder_mask =
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) |
 		BIT(TRANSCODER_C) | BIT(TRANSCODER_EDP),
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D) | BIT(PORT_E),
 	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),
 };
 
@@ -414,8 +394,6 @@ static const struct intel_display_device_info bdw_display = {
 	.has_dp_mst = 1,
 	.has_fpga_dbg = 1,
 	.has_hotplug = 1,
-	.has_psr = 1,
-	.has_psr_hw_tracking = 1,
 	HSW_PIPE_OFFSETS,
 	IVB_CURSOR_OFFSETS,
 	IVB_COLORS,
@@ -425,7 +403,6 @@ static const struct intel_display_device_info bdw_display = {
 	.__runtime_defaults.cpu_transcoder_mask =
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) |
 		BIT(TRANSCODER_C) | BIT(TRANSCODER_EDP),
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D) | BIT(PORT_E),
 	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),
 };
 
@@ -441,7 +418,6 @@ static const struct intel_display_device_info chv_display = {
 	.__runtime_defaults.pipe_mask = BIT(PIPE_A) | BIT(PIPE_B) | BIT(PIPE_C),
 	.__runtime_defaults.cpu_transcoder_mask =
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) | BIT(TRANSCODER_C),
-	.__runtime_defaults.port_mask = BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D), /* HDMI/DP B/C/D */
 };
 
 static const struct intel_display_device_info skl_display = {
@@ -465,7 +441,6 @@ static const struct intel_display_device_info skl_display = {
 	.__runtime_defaults.cpu_transcoder_mask =
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) |
 		BIT(TRANSCODER_C) | BIT(TRANSCODER_EDP),
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D) | BIT(PORT_E),
 	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),
 };
 
@@ -489,8 +464,7 @@ static const struct intel_display_device_info skl_display = {
 	.__runtime_defaults.cpu_transcoder_mask = \
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) | \
 		BIT(TRANSCODER_C) | BIT(TRANSCODER_EDP) | \
-		BIT(TRANSCODER_DSI_A) | BIT(TRANSCODER_DSI_C), \
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C)
+		BIT(TRANSCODER_DSI_A) | BIT(TRANSCODER_DSI_C)
 
 static const struct intel_display_device_info bxt_display = {
 	GEN9_LP_DISPLAY,
@@ -507,57 +481,46 @@ static const struct intel_display_device_info glk_display = {
 	.__runtime_defaults.ip.ver = 10,
 };
 
-#define ICL_DISPLAY \
-	.abox_mask = BIT(0), \
-	.dbuf.size = 2048, \
-	.dbuf.slice_mask = BIT(DBUF_S1) | BIT(DBUF_S2), \
-	.has_ddi = 1, \
-	.has_dp_mst = 1, \
-	.has_fpga_dbg = 1, \
-	.has_hotplug = 1, \
-	.has_ipc = 1, \
-	.has_psr = 1, \
-	.has_psr_hw_tracking = 1, \
-	.pipe_offsets = { \
-		[TRANSCODER_A] = PIPE_A_OFFSET, \
-		[TRANSCODER_B] = PIPE_B_OFFSET, \
-		[TRANSCODER_C] = PIPE_C_OFFSET, \
-		[TRANSCODER_EDP] = PIPE_EDP_OFFSET, \
-		[TRANSCODER_DSI_0] = PIPE_DSI0_OFFSET, \
-		[TRANSCODER_DSI_1] = PIPE_DSI1_OFFSET, \
-	}, \
-	.trans_offsets = { \
-		[TRANSCODER_A] = TRANSCODER_A_OFFSET, \
-		[TRANSCODER_B] = TRANSCODER_B_OFFSET, \
-		[TRANSCODER_C] = TRANSCODER_C_OFFSET, \
-		[TRANSCODER_EDP] = TRANSCODER_EDP_OFFSET, \
-		[TRANSCODER_DSI_0] = TRANSCODER_DSI0_OFFSET, \
-		[TRANSCODER_DSI_1] = TRANSCODER_DSI1_OFFSET, \
-	}, \
-	IVB_CURSOR_OFFSETS, \
-	ICL_COLORS, \
-	\
-	.__runtime_defaults.ip.ver = 11, \
-	.__runtime_defaults.has_dmc = 1, \
-	.__runtime_defaults.has_dsc = 1, \
-	.__runtime_defaults.has_hdcp = 1, \
-	.__runtime_defaults.pipe_mask = BIT(PIPE_A) | BIT(PIPE_B) | BIT(PIPE_C), \
-	.__runtime_defaults.cpu_transcoder_mask = \
-		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) | \
-		BIT(TRANSCODER_C) | BIT(TRANSCODER_EDP) | \
-		BIT(TRANSCODER_DSI_0) | BIT(TRANSCODER_DSI_1), \
-	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A)
+static const struct intel_display_device_info gen11_display = {
+	.abox_mask = BIT(0),
+	.dbuf.size = 2048,
+	.dbuf.slice_mask = BIT(DBUF_S1) | BIT(DBUF_S2),
+	.has_ddi = 1,
+	.has_dp_mst = 1,
+	.has_fpga_dbg = 1,
+	.has_hotplug = 1,
+	.has_ipc = 1,
+	.has_psr = 1,
+	.has_psr_hw_tracking = 1,
+	.pipe_offsets = {
+		[TRANSCODER_A] = PIPE_A_OFFSET,
+		[TRANSCODER_B] = PIPE_B_OFFSET,
+		[TRANSCODER_C] = PIPE_C_OFFSET,
+		[TRANSCODER_EDP] = PIPE_EDP_OFFSET,
+		[TRANSCODER_DSI_0] = PIPE_DSI0_OFFSET,
+		[TRANSCODER_DSI_1] = PIPE_DSI1_OFFSET,
+	},
+	.trans_offsets = {
+		[TRANSCODER_A] = TRANSCODER_A_OFFSET,
+		[TRANSCODER_B] = TRANSCODER_B_OFFSET,
+		[TRANSCODER_C] = TRANSCODER_C_OFFSET,
+		[TRANSCODER_EDP] = TRANSCODER_EDP_OFFSET,
+		[TRANSCODER_DSI_0] = TRANSCODER_DSI0_OFFSET,
+		[TRANSCODER_DSI_1] = TRANSCODER_DSI1_OFFSET,
+	},
+	IVB_CURSOR_OFFSETS,
+	ICL_COLORS,
 
-static const struct intel_display_device_info icl_display = {
-	ICL_DISPLAY,
-
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D) | BIT(PORT_E),
-};
-
-static const struct intel_display_device_info jsl_ehl_display = {
-	ICL_DISPLAY,
-
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D),
+	.__runtime_defaults.ip.ver = 11,
+	.__runtime_defaults.has_dmc = 1,
+	.__runtime_defaults.has_dsc = 1,
+	.__runtime_defaults.has_hdcp = 1,
+	.__runtime_defaults.pipe_mask = BIT(PIPE_A) | BIT(PIPE_B) | BIT(PIPE_C),
+	.__runtime_defaults.cpu_transcoder_mask =
+		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) |
+		BIT(TRANSCODER_C) | BIT(TRANSCODER_EDP) |
+		BIT(TRANSCODER_DSI_0) | BIT(TRANSCODER_DSI_1),
+	.__runtime_defaults.fbc_mask = BIT(INTEL_FBC_A),
 };
 
 #define XE_D_DISPLAY \
@@ -605,20 +568,6 @@ static const struct intel_display_device_info jsl_ehl_display = {
 
 static const struct intel_display_device_info tgl_display = {
 	XE_D_DISPLAY,
-
-	/*
-	 * FIXME DDI C/combo PHY C missing due to combo PHY
-	 * code making a mess on SKUs where the PHY is missing.
-	 */
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) |
-		BIT(PORT_TC1) | BIT(PORT_TC2) | BIT(PORT_TC3) | BIT(PORT_TC4) | BIT(PORT_TC5) | BIT(PORT_TC6),
-};
-
-static const struct intel_display_device_info dg1_display = {
-	XE_D_DISPLAY,
-
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) |
-		BIT(PORT_TC1) | BIT(PORT_TC2),
 };
 
 static const struct intel_display_device_info rkl_display = {
@@ -630,17 +579,12 @@ static const struct intel_display_device_info rkl_display = {
 	.__runtime_defaults.pipe_mask = BIT(PIPE_A) | BIT(PIPE_B) | BIT(PIPE_C),
 	.__runtime_defaults.cpu_transcoder_mask =
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) | BIT(TRANSCODER_C),
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) |
-		BIT(PORT_TC1) | BIT(PORT_TC2),
 };
 
 static const struct intel_display_device_info adl_s_display = {
 	XE_D_DISPLAY,
 	.has_hti = 1,
 	.has_psr_hw_tracking = 0,
-
-	.__runtime_defaults.port_mask = BIT(PORT_A) |
-		BIT(PORT_TC1) | BIT(PORT_TC2) | BIT(PORT_TC3) | BIT(PORT_TC4),
 };
 
 #define XE_LPD_FEATURES \
@@ -695,8 +639,6 @@ static const struct intel_display_device_info xe_lpd_display = {
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) |
 		BIT(TRANSCODER_C) | BIT(TRANSCODER_D) |
 		BIT(TRANSCODER_DSI_0) | BIT(TRANSCODER_DSI_1),
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) |
-		BIT(PORT_TC1) | BIT(PORT_TC2) | BIT(PORT_TC3) | BIT(PORT_TC4),
 };
 
 static const struct intel_display_device_info xe_hpd_display = {
@@ -706,8 +648,6 @@ static const struct intel_display_device_info xe_hpd_display = {
 	.__runtime_defaults.cpu_transcoder_mask =
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) |
 		BIT(TRANSCODER_C) | BIT(TRANSCODER_D),
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) | BIT(PORT_C) | BIT(PORT_D_XELPD) |
-		BIT(PORT_TC1),
 };
 
 static const struct intel_display_device_info xe_lpdp_display = {
@@ -720,8 +660,6 @@ static const struct intel_display_device_info xe_lpdp_display = {
 	.__runtime_defaults.cpu_transcoder_mask =
 		BIT(TRANSCODER_A) | BIT(TRANSCODER_B) |
 		BIT(TRANSCODER_C) | BIT(TRANSCODER_D),
-	.__runtime_defaults.port_mask = BIT(PORT_A) | BIT(PORT_B) |
-		BIT(PORT_TC1) | BIT(PORT_TC2) | BIT(PORT_TC3) | BIT(PORT_TC4),
 };
 
 /*
@@ -777,11 +715,11 @@ static const struct {
 	INTEL_GLK_IDS(&glk_display),
 	INTEL_KBL_IDS(&skl_display),
 	INTEL_CFL_IDS(&skl_display),
-	INTEL_ICL_11_IDS(&icl_display),
-	INTEL_EHL_IDS(&jsl_ehl_display),
-	INTEL_JSL_IDS(&jsl_ehl_display),
+	INTEL_ICL_11_IDS(&gen11_display),
+	INTEL_EHL_IDS(&gen11_display),
+	INTEL_JSL_IDS(&gen11_display),
 	INTEL_TGL_12_IDS(&tgl_display),
-	INTEL_DG1_IDS(&dg1_display),
+	INTEL_DG1_IDS(&tgl_display),
 	INTEL_RKL_IDS(&rkl_display),
 	INTEL_ADLS_IDS(&adl_s_display),
 	INTEL_RPLS_IDS(&adl_s_display),
@@ -821,22 +759,6 @@ probe_gmdid_display(struct drm_i915_private *i915, u16 *ver, u16 *rel, u16 *step
 
 	val = ioread32(addr);
 	pci_iounmap(pdev, addr);
-
-	if (val == 0xffffffff) {
-		/*
-		 * Bugs in PCI programming (or failing hardware) can occasionally cause
-		 * lost access to the MMIO BAR.  When this happens, register reads will
-		 * come back with 0xFFFFFFFF for every register, including GMD_ID, and
-		 * then we may wrongly claim that we are using future display IP version.
-		 *
-		 * Additionally, when running on the VF devices, read of GMD_ID register
-		 * might also return 0xFFFFFFFF as this register is not available for VFs.
-		 *
-		 * Disable display if that happen. Proper handling will be done later.
-		 */
-		drm_info(&i915->drm, "Cannot read valid display IP version; disabling display.\n");
-		return &no_display;
-	}
 
 	if (val == 0)
 		/* Platform doesn't have display */
@@ -886,10 +808,6 @@ void intel_display_device_info_runtime_init(struct drm_i915_private *i915)
 {
 	struct intel_display_runtime_info *display_runtime = DISPLAY_RUNTIME_INFO(i915);
 	enum pipe pipe;
-
-	BUILD_BUG_ON(BITS_PER_TYPE(display_runtime->pipe_mask) < I915_MAX_PIPES);
-	BUILD_BUG_ON(BITS_PER_TYPE(display_runtime->cpu_transcoder_mask) < I915_MAX_TRANSCODERS);
-	BUILD_BUG_ON(BITS_PER_TYPE(display_runtime->port_mask) < I915_MAX_PORTS);
 
 	/* Wa_14011765242: adl-s A0,A1 */
 	if (IS_ADLS_DISPLAY_STEP(i915, STEP_A0, STEP_A2))

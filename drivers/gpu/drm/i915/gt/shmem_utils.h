@@ -11,11 +11,9 @@
 struct iosys_map;
 struct drm_i915_gem_object;
 struct file;
-struct intel_gt;
 
 struct file *shmem_create_from_data(const char *name, void *data, size_t len);
-struct file *shmem_create_from_object(struct drm_i915_gem_object *obj,
-				      struct intel_gt *gt);
+struct file *shmem_create_from_object(struct drm_i915_gem_object *obj);
 
 void *shmem_pin_map(struct file *file);
 void shmem_unpin_map(struct file *file, void *ptr);

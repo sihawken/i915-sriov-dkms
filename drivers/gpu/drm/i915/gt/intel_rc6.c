@@ -118,12 +118,14 @@ static void gen11_rc6_enable(struct intel_rc6 *rc6)
 			GEN6_RC_CTL_EI_MODE(1);
 
 	/*
-	 * BSpec 52698 - Render powergating must be off.
+	 * Wa_16011777198 and BSpec 52698 - Render powergating must be off.
 	 * FIXME BSpec is outdated, disabling powergating for MTL is just
 	 * temporary wa and should be removed after fixing real cause
 	 * of forcewake timeouts.
 	 */
-	if (IS_GFX_GT_IP_RANGE(gt, IP_VER(12, 70), IP_VER(12, 71)))
+	if (IS_METEORLAKE(gt->i915) ||
+	    IS_DG2_GRAPHICS_STEP(gt->i915, G10, STEP_A0, STEP_C0) ||
+	    IS_DG2_GRAPHICS_STEP(gt->i915, G11, STEP_A0, STEP_B0))
 		pg_enable =
 			GEN9_MEDIA_PG_ENABLE |
 			GEN11_MEDIA_SAMPLER_PG_ENABLE;
@@ -505,9 +507,6 @@ static bool rc6_supported(struct intel_rc6 *rc6)
 	if (!HAS_RC6(i915))
 		return false;
 
-	if (IS_SRIOV_VF(i915))
-		return false;
-
 	if (intel_vgpu_active(i915))
 		return false;
 
@@ -527,7 +526,8 @@ static bool rc6_supported(struct intel_rc6 *rc6)
 		return false;
 	}
 
-	if (IS_MEDIA_GT_IP_STEP(gt, IP_VER(13, 0), STEP_A0, STEP_B0)) {
+	if (IS_MTL_MEDIA_STEP(gt->i915, STEP_A0, STEP_B0) &&
+	    gt->type == GT_MEDIA) {
 		drm_notice(&i915->drm,
 			   "Media RC6 disabled on A step\n");
 		return false;

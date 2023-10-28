@@ -20,13 +20,12 @@
 #include "intel_pxp_types.h"
 
 static bool
-is_fw_err_platform_config(struct intel_pxp *pxp, u32 type)
+is_fw_err_platform_config(u32 type)
 {
 	switch (type) {
 	case PXP_STATUS_ERROR_API_VERSION:
 	case PXP_STATUS_PLATFCONFIG_KF1_NOVERIF:
 	case PXP_STATUS_PLATFCONFIG_KF1_BAD:
-		pxp->platform_cfg_is_bad = true;
 		return true;
 	default:
 		break;
@@ -51,14 +50,13 @@ fw_err_to_string(u32 type)
 	return NULL;
 }
 
-int intel_pxp_tee_io_message(struct intel_pxp *pxp,
-			     void *msg_in, u32 msg_in_size,
-			     void *msg_out, u32 msg_out_max_size,
-			     u32 *msg_out_rcv_size)
+static int intel_pxp_tee_io_message(struct intel_pxp *pxp,
+				    void *msg_in, u32 msg_in_size,
+				    void *msg_out, u32 msg_out_max_size,
+				    u32 *msg_out_rcv_size)
 {
 	struct drm_i915_private *i915 = pxp->ctrl_gt->i915;
 	struct i915_pxp_component *pxp_component = pxp->pxp_component;
-	u8 tmp_drop_buf[64];
 	int ret = 0;
 
 	mutex_lock(&pxp->tee_mutex);
@@ -72,29 +70,14 @@ int intel_pxp_tee_io_message(struct intel_pxp *pxp,
 		goto unlock;
 	}
 
-	if (pxp->mei_pxp_last_msg_interrupted) {
-		/* read and drop data from the previous iteration */
-		ret = pxp_component->ops->recv(pxp_component->tee_dev, &tmp_drop_buf, 64);
-		if (ret == -EINTR)
-			goto unlock;
-
-		pxp->mei_pxp_last_msg_interrupted = false;
-	}
-
 	ret = pxp_component->ops->send(pxp_component->tee_dev, msg_in, msg_in_size);
 	if (ret) {
-		/* flag on next msg to drop interrupted msg */
-		if (ret == -EINTR)
-			pxp->mei_pxp_last_msg_interrupted = true;
 		drm_err(&i915->drm, "Failed to send PXP TEE message\n");
 		goto unlock;
 	}
 
 	ret = pxp_component->ops->recv(pxp_component->tee_dev, msg_out, msg_out_max_size);
 	if (ret < 0) {
-		/* flag on next msg to drop interrupted msg */
-		if (ret == -EINTR)
-			pxp->mei_pxp_last_msg_interrupted = true;
 		drm_err(&i915->drm, "Failed to receive PXP TEE message\n");
 		goto unlock;
 	}
@@ -262,7 +245,7 @@ static int alloc_streaming_command(struct intel_pxp *pxp)
 	}
 
 	/* map the lmem into the virtual memory pointer */
-	cmd = i915_gem_object_pin_map_unlocked(obj, i915_coherent_map_type(pxp->ctrl_gt, obj, true));
+	cmd = i915_gem_object_pin_map_unlocked(obj, i915_coherent_map_type(i915, obj, true));
 	if (IS_ERR(cmd)) {
 		drm_err(&i915->drm, "Failed to map gsc message page!\n");
 		err = PTR_ERR(cmd);
@@ -356,7 +339,7 @@ int intel_pxp_tee_cmd_create_arb_session(struct intel_pxp *pxp,
 	if (ret) {
 		drm_err(&i915->drm, "Failed to send tee msg init arb session, ret=[%d]\n", ret);
 	} else if (msg_out.header.status != 0) {
-		if (is_fw_err_platform_config(pxp, msg_out.header.status)) {
+		if (is_fw_err_platform_config(msg_out.header.status)) {
 			drm_info_once(&i915->drm,
 				      "PXP init-arb-session-%d failed due to BIOS/SOC:0x%08x:%s\n",
 				      arb_session_id, msg_out.header.status,
@@ -373,7 +356,7 @@ int intel_pxp_tee_cmd_create_arb_session(struct intel_pxp *pxp,
 	return ret;
 }
 
-static void intel_pxp_tee_end_one_fw_session(struct intel_pxp *pxp, u32 session_id)
+void intel_pxp_tee_end_arb_fw_session(struct intel_pxp *pxp, u32 session_id)
 {
 	struct drm_i915_private *i915 = pxp->ctrl_gt->i915;
 	struct pxp42_inv_stream_key_in msg_in = {0};
@@ -404,7 +387,7 @@ try_again:
 		drm_err(&i915->drm, "Failed to send tee msg for inv-stream-key-%u, ret=[%d]\n",
 			session_id, ret);
 	} else if (msg_out.header.status != 0) {
-		if (is_fw_err_platform_config(pxp, msg_out.header.status)) {
+		if (is_fw_err_platform_config(msg_out.header.status)) {
 			drm_info_once(&i915->drm,
 				      "PXP inv-stream-key-%u failed due to BIOS/SOC :0x%08x:%s\n",
 				      session_id, msg_out.header.status,
@@ -416,15 +399,5 @@ try_again:
 			drm_dbg(&i915->drm, "     cmd-detail: ID=[0x%08x],API-Ver-[0x%08x]\n",
 				msg_in.header.command_id, msg_in.header.api_version);
 		}
-	}
-}
-
-void intel_pxp_tee_end_fw_sessions(struct intel_pxp *pxp, u32 sessions_mask)
-{
-	int n;
-
-	for (n = 0; n < INTEL_PXP_MAX_HWDRM_SESSIONS; ++n) {
-		if (sessions_mask & (1 << n))
-			intel_pxp_tee_end_one_fw_session(pxp, n);
 	}
 }
