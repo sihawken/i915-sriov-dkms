@@ -1,8 +1,8 @@
 name: Merge i915-sriov-dkms upstream
 on: 
   schedule:
-    - cron: '0 0 * * 1'
-    # scheduled for 00:00 every Monday
+    - cron: '0 0 * * *'
+    # scheduled for 00:00 every night
   workflow_dispatch:
 
 jobs:
