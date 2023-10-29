@@ -10,6 +10,7 @@
 #include "gt/intel_reset.h"
 #include "gt/iov/intel_iov_memirq.h"
 #include "gt/iov/intel_iov_query.h"
+#include "gt/iov/intel_iov_utils.h"
 #include "intel_gsc_fw.h"
 #include "intel_gsc_uc.h"
 #include "intel_guc.h"
@@ -763,8 +764,21 @@ void intel_uc_reset_finish(struct intel_uc *uc)
 	uc->reset_in_progress = false;
 
 	/* Firmware expected to be running when this function is called */
-	if (intel_guc_is_fw_running(guc) && intel_uc_uses_guc_submission(uc))
+	if (intel_guc_is_fw_running(guc) && intel_uc_uses_guc_submission(uc)) {
+		struct drm_i915_private *i915 = uc_to_gt(uc)->i915;
+
 		intel_guc_submission_reset_finish(guc);
+
+		/*
+		 * Wa_14019103365:
+		 * In case the VFs are enabled and the GuC is reset,
+		 * we need to re-disableGSC engine in GuC.
+		 */
+		if (IS_METEORLAKE(i915) &&
+		    pf_has_vfs_enabled(&uc_to_gt(uc)->iov) &&
+		    intel_gsc_uc_fw_init_done(&uc->gsc))
+			intel_guc_disable_gsc_engine(guc);
+	}
 }
 
 void intel_uc_cancel_requests(struct intel_uc *uc)

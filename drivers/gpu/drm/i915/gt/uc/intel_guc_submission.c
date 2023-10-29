@@ -1657,9 +1657,7 @@ static void guc_engine_reset_prepare(struct intel_engine_cs *engine)
 	 * Wa_22011802037: In addition to stopping the cs, we need
 	 * to wait for any pending mi force wakeups
 	 */
-	if (IS_MTL_GRAPHICS_STEP(engine->i915, M, STEP_A0, STEP_B0) ||
-	    (GRAPHICS_VER(engine->i915) >= 11 &&
-	     GRAPHICS_VER_FULL(engine->i915) < IP_VER(12, 70))) {
+	if (intel_engine_reset_needs_wa_22011802037(engine->gt)) {
 		intel_engine_stop_cs(engine);
 		intel_engine_wait_for_pending_mi_fw(engine);
 	}
@@ -2937,6 +2935,40 @@ static void guc_context_unpin(struct intel_context *ce)
 static void guc_context_post_unpin(struct intel_context *ce)
 {
 	lrc_post_unpin(ce);
+}
+
+int intel_guc_set_engine_sched(struct intel_guc *guc, u32 class, u32 flags)
+{
+	u32 state = flags & SET_ENGINE_SCHED_FLAGS_ENABLE ?
+		    GUC_SET_ENGINE_SCHED_STATE_ENABLE : GUC_SET_ENGINE_SCHED_STATE_DISABLE;
+	u32 imm_mode = flags & SET_ENGINE_SCHED_FLAGS_IMMEDIATE ?
+		       GUC_SET_ENGINE_SCHED_IMM_MODE_ENABLE : GUC_SET_ENGINE_SCHED_IMM_MODE_DISABLE;
+	u32 g2h_len_dw = HOST2GUC_SET_ENGINE_SCHED_RESPONSE_MSG_LEN;
+	u32 request[HOST2GUC_SET_ENGINE_SCHED_REQUEST_MSG_LEN] = {
+		FIELD_PREP(GUC_HXG_MSG_0_ORIGIN, GUC_HXG_ORIGIN_HOST) |
+		FIELD_PREP(GUC_HXG_MSG_0_TYPE, GUC_HXG_TYPE_REQUEST) |
+		FIELD_PREP(GUC_HXG_REQUEST_MSG_0_ACTION, GUC_ACTION_HOST2GUC_SET_ENGINE_SCHED),
+		FIELD_PREP(HOST2GUC_SET_ENGINE_SCHED_REQUEST_MSG_1_ENGINE_CLASS, class),
+		FIELD_PREP(HOST2GUC_SET_ENGINE_SCHED_REQUEST_MSG_2_STATE, state),
+		FIELD_PREP(HOST2GUC_SET_ENGINE_SCHED_REQUEST_MSG_3_IMM_MODE, imm_mode),
+	};
+
+	GEM_BUG_ON(class > MAX_ENGINE_INSTANCE);
+
+	return guc_submission_send_busy_loop(guc, request, ARRAY_SIZE(request), g2h_len_dw, true);
+}
+
+int intel_guc_process_set_engine_sched_done(struct intel_guc *guc, const u32 *msg, u32 len)
+{
+	if (len != GUC2HOST_SET_ENGINE_SCHED_DONE_MSG_LEN)
+		return -EPROTO;
+
+	if (FIELD_GET(GUC2HOST_SET_ENGINE_SCHED_DONE_MSG_0_MBZ, msg[0] != 0))
+		return -EPROTO;
+
+	decr_outstanding_submission_g2h(guc);
+
+	return 0;
 }
 
 static void __guc_context_sched_enable(struct intel_guc *guc,
@@ -4402,7 +4434,7 @@ static void guc_default_vfuncs(struct intel_engine_cs *engine)
 
 	/* Wa_14014475959:dg2 */
 	if (engine->class == COMPUTE_CLASS)
-		if (IS_MTL_GRAPHICS_STEP(engine->i915, M, STEP_A0, STEP_B0) ||
+		if (IS_GFX_GT_IP_STEP(engine->gt, IP_VER(12, 70), STEP_A0, STEP_B0) ||
 		    IS_DG2(engine->i915))
 			engine->flags |= I915_ENGINE_USES_WA_HOLD_CCS_SWITCHOUT;
 

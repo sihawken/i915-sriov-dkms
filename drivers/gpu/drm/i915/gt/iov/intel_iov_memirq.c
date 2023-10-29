@@ -64,7 +64,7 @@ static int vf_create_memirq_data(struct intel_iov *iov)
 		goto out;
 	}
 
-	vaddr = i915_gem_object_pin_map_unlocked(obj, i915_coherent_map_type(i915, obj, true));
+	vaddr = i915_gem_object_pin_map_unlocked(obj, i915_coherent_map_type(iov_to_gt(iov), obj, true));
 	if (IS_ERR(vaddr)) {
 		err = PTR_ERR(vaddr);
 		goto out_obj;

@@ -38,9 +38,6 @@
 #include "i915_reg.h"
 #include "intel_pci_config.h"
 
-__diag_push();
-__diag_ignore_all("-Woverride-init", "Allow overriding inherited members");
-
 #define PLATFORM(x) .platform = (x)
 #define GEN(x) \
 	.__runtime.graphics.ip.ver = (x), \
@@ -719,7 +716,6 @@ static const struct intel_device_info adl_p_info = {
 	.has_3d_pipeline = 1, \
 	.has_64bit_reloc = 1, \
 	.has_flat_ccs = 1, \
-	.has_4tile = 1, \
 	.has_global_mocs = 1, \
 	.has_gt_uc = 1, \
 	.has_llc = 1, \
@@ -850,8 +846,6 @@ static const struct intel_device_info mtl_info = {
 };
 
 #undef PLATFORM
-
-__diag_pop();
 
 /*
  * Make sure any device matches here are from most specific to most
@@ -1143,6 +1137,28 @@ static struct pci_driver i915_pci_driver = {
 	.driver.pm = &i915_pm_ops,
 	.sriov_configure = i915_pci_sriov_configure,
 };
+
+#ifdef CONFIG_PCI_IOV
+/* our Gen12 SR-IOV platforms are simple */
+#define GEN12_VF_OFFSET 1
+#define GEN12_VF_STRIDE 1
+#define GEN12_VF_ROUTING_OFFSET(id) (GEN12_VF_OFFSET + ((id) - 1) * GEN12_VF_STRIDE)
+
+struct pci_dev *i915_pci_pf_get_vf_dev(struct pci_dev *pdev, unsigned int id)
+{
+	u16 vf_devid = pci_dev_id(pdev) + GEN12_VF_ROUTING_OFFSET(id);
+
+	GEM_BUG_ON(!dev_is_pf(&pdev->dev));
+	GEM_BUG_ON(!id);
+	GEM_BUG_ON(id > pci_num_vf(pdev));
+
+	/* caller must use pci_dev_put() */
+	return pci_get_domain_bus_and_slot(pci_domain_nr(pdev->bus),
+					   PCI_BUS_NUM(vf_devid),
+					   PCI_DEVFN(PCI_SLOT(vf_devid),
+					   PCI_FUNC(vf_devid)));
+}
+#endif
 
 int i915_pci_register_driver(void)
 {

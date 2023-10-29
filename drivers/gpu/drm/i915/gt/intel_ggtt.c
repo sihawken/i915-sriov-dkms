@@ -16,20 +16,27 @@
 #include "gem/i915_gem_lmem.h"
 
 #include "iov/intel_iov.h"
+#include "iov/intel_iov_ggtt.h"
+#include "iov/intel_iov_utils.h"
 
+#include "intel_context.h"
 #include "intel_ggtt_gmch.h"
+#include "intel_gpu_commands.h"
 #include "intel_gt.h"
 #include "intel_gt_print.h"
 #include "intel_gt_regs.h"
 #include "intel_pci_config.h"
+#include "intel_ring.h"
 #include "i915_drv.h"
 #include "i915_pci.h"
+#include "i915_request.h"
 #include "i915_scatterlist.h"
 #include "i915_utils.h"
 #include "i915_vgpu.h"
 
 #include "intel_gtt.h"
 #include "gen8_ppgtt.h"
+#include "intel_engine_pm.h"
 
 static void i915_ggtt_color_adjust(const struct drm_mm_node *node,
 				   unsigned long color,
@@ -286,6 +293,142 @@ u64 gen8_ggtt_pte_encode(dma_addr_t addr,
 	return pte;
 }
 
+static bool should_update_ggtt_with_bind(struct i915_ggtt *ggtt)
+{
+	struct intel_gt *gt = ggtt->vm.gt;
+
+	return intel_gt_is_bind_context_ready(gt);
+}
+
+static struct intel_context *gen8_ggtt_bind_get_ce(struct i915_ggtt *ggtt)
+{
+	struct intel_context *ce;
+	struct intel_gt *gt = ggtt->vm.gt;
+
+	if (intel_gt_is_wedged(gt))
+		return NULL;
+
+	ce = gt->engine[BCS0]->bind_context;
+	GEM_BUG_ON(!ce);
+
+	/*
+	 * If the GT is not awake already at this stage then fallback
+	 * to pci based GGTT update otherwise __intel_wakeref_get_first()
+	 * would conflict with fs_reclaim trying to allocate memory while
+	 * doing rpm_resume().
+	 */
+	if (!intel_gt_pm_get_if_awake(gt))
+		return NULL;
+
+	intel_engine_pm_get(ce->engine);
+
+	return ce;
+}
+
+static void gen8_ggtt_bind_put_ce(struct intel_context *ce)
+{
+	intel_engine_pm_put(ce->engine);
+	intel_gt_pm_put(ce->engine->gt);
+}
+
+static bool gen8_ggtt_bind_ptes(struct i915_ggtt *ggtt, u32 offset,
+				struct sg_table *pages, u32 num_entries,
+				const gen8_pte_t pte)
+{
+	struct i915_sched_attr attr = {};
+	struct intel_gt *gt = ggtt->vm.gt;
+	const gen8_pte_t scratch_pte = ggtt->vm.scratch[0]->encode;
+	struct sgt_iter iter;
+	struct i915_request *rq;
+	struct intel_context *ce;
+	u32 *cs;
+
+	if (!num_entries)
+		return true;
+
+	ce = gen8_ggtt_bind_get_ce(ggtt);
+	if (!ce)
+		return false;
+
+	if (pages)
+		iter = __sgt_iter(pages->sgl, true);
+
+	while (num_entries) {
+		int count = 0;
+		dma_addr_t addr;
+		/* MI_UPDATE_GTT can update 511 entries in a single command */
+		u32 n_ptes = min_t(u32, 511, num_entries);
+
+		if (mutex_lock_interruptible(&ce->timeline->mutex))
+			goto put_ce;
+
+		intel_context_enter(ce);
+		rq = __i915_request_create(ce, GFP_NOWAIT | GFP_ATOMIC);
+		intel_context_exit(ce);
+		if (IS_ERR(rq)) {
+			GT_TRACE(gt, "Failed to get bind request\n");
+			mutex_unlock(&ce->timeline->mutex);
+			goto put_ce;
+		}
+
+		cs = intel_ring_begin(rq, 2 * n_ptes + 2);
+		if (IS_ERR(cs)) {
+			GT_TRACE(gt, "Failed to ring space for GGTT bind\n");
+			i915_request_set_error_once(rq, PTR_ERR(cs));
+			/* once a request is created, it must be queued */
+			goto queue_err_rq;
+		}
+
+		*cs++ = MI_UPDATE_GTT | (2 * n_ptes);
+		*cs++ = offset << 12;
+
+		if (pages) {
+			for_each_sgt_daddr_next(addr, iter) {
+				if (count == n_ptes)
+					break;
+				*cs++ = lower_32_bits(pte | addr);
+				*cs++ = upper_32_bits(pte | addr);
+				count++;
+			}
+			/* fill remaining with scratch pte, if any */
+			if (count < n_ptes) {
+				memset64((u64 *)cs, scratch_pte,
+					 n_ptes - count);
+				cs += (n_ptes - count) * 2;
+			}
+		} else {
+			memset64((u64 *)cs, pte, n_ptes);
+			cs += n_ptes * 2;
+		}
+
+		intel_ring_advance(rq, cs);
+queue_err_rq:
+		i915_request_get(rq);
+		__i915_request_commit(rq);
+		__i915_request_queue(rq, &attr);
+
+		mutex_unlock(&ce->timeline->mutex);
+		/* This will break if the request is complete or after engine reset */
+		i915_request_wait(rq, 0, MAX_SCHEDULE_TIMEOUT);
+		if (rq->fence.error)
+			goto err_rq;
+
+		i915_request_put(rq);
+
+		num_entries -= n_ptes;
+		offset += n_ptes;
+	}
+
+	gen8_ggtt_bind_put_ce(ce);
+	return true;
+
+err_rq:
+	i915_request_put(rq);
+put_ce:
+	gen8_ggtt_bind_put_ce(ce);
+	return false;
+}
+
 static void gen8_set_pte(void __iomem *addr, gen8_pte_t pte)
 {
 	writeq(pte, addr);
@@ -304,6 +447,20 @@ static void gen8_ggtt_insert_page(struct i915_address_space *vm,
 	gen8_set_pte(pte, ggtt->vm.pte_encode(addr, pat_index, flags));
 
 	ggtt->invalidate(ggtt);
+}
+
+static void gen8_ggtt_insert_page_bind(struct i915_address_space *vm,
+				       dma_addr_t addr, u64 offset,
+				       unsigned int pat_index, u32 flags)
+{
+	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+	gen8_pte_t pte = ggtt->vm.pte_encode(addr, pat_index, flags);
+
+	if (should_update_ggtt_with_bind(i915_vm_to_ggtt(vm)) &&
+	    gen8_ggtt_bind_ptes(ggtt, offset, NULL, 1, pte))
+		return ggtt->invalidate(ggtt);
+
+	gen8_ggtt_insert_page(vm, addr, offset, pat_index, flags);
 }
 
 static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
@@ -345,6 +502,49 @@ static void gen8_ggtt_insert_entries(struct i915_address_space *vm,
 	ggtt->invalidate(ggtt);
 }
 
+static bool __gen8_ggtt_insert_entries_bind(struct i915_address_space *vm,
+					    struct i915_vma_resource *vma_res,
+					    unsigned int pat_index, u32 flags)
+{
+	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+	gen8_pte_t scratch_pte = vm->scratch[0]->encode;
+	gen8_pte_t pte_encode = ggtt->vm.pte_encode(0, pat_index, flags);
+	u64 start, end;
+
+	start = (vma_res->start - vma_res->guard) / I915_GTT_PAGE_SIZE;
+	end = start + vma_res->guard / I915_GTT_PAGE_SIZE;
+	if (!gen8_ggtt_bind_ptes(ggtt, start, NULL, end - start, scratch_pte))
+		goto err;
+
+	start = end;
+	end += (vma_res->node_size + vma_res->guard) / I915_GTT_PAGE_SIZE;
+	if (!gen8_ggtt_bind_ptes(ggtt, start, vma_res->bi.pages,
+	      vma_res->node_size / I915_GTT_PAGE_SIZE, pte_encode))
+		goto err;
+
+	start += vma_res->node_size / I915_GTT_PAGE_SIZE;
+	if (!gen8_ggtt_bind_ptes(ggtt, start, NULL, end - start, scratch_pte))
+		goto err;
+
+	return true;
+
+err:
+	return false;
+}
+
+static void gen8_ggtt_insert_entries_bind(struct i915_address_space *vm,
+					  struct i915_vma_resource *vma_res,
+					  unsigned int pat_index, u32 flags)
+{
+	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+
+	if (should_update_ggtt_with_bind(i915_vm_to_ggtt(vm)) &&
+	    __gen8_ggtt_insert_entries_bind(vm, vma_res, pat_index, flags))
+		return ggtt->invalidate(ggtt);
+
+	gen8_ggtt_insert_entries(vm, vma_res, pat_index, flags);
+}
+
 static void gen8_ggtt_clear_range(struct i915_address_space *vm,
 				  u64 start, u64 length)
 {
@@ -364,6 +564,27 @@ static void gen8_ggtt_clear_range(struct i915_address_space *vm,
 
 	for (i = 0; i < num_entries; i++)
 		gen8_set_pte(&gtt_base[i], scratch_pte);
+}
+
+static void gen8_ggtt_scratch_range_bind(struct i915_address_space *vm,
+					 u64 start, u64 length)
+{
+	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+	unsigned int first_entry = start / I915_GTT_PAGE_SIZE;
+	unsigned int num_entries = length / I915_GTT_PAGE_SIZE;
+	const gen8_pte_t scratch_pte = vm->scratch[0]->encode;
+	const int max_entries = ggtt_total_entries(ggtt) - first_entry;
+
+	if (WARN(num_entries > max_entries,
+		 "First entry = %d; Num entries = %d (max=%d)\n",
+		 first_entry, num_entries, max_entries))
+		num_entries = max_entries;
+
+	if (should_update_ggtt_with_bind(ggtt) && gen8_ggtt_bind_ptes(ggtt, first_entry,
+	     NULL, num_entries, scratch_pte))
+		return ggtt->invalidate(ggtt);
+
+	gen8_ggtt_clear_range(vm, start, length);
 }
 
 static void gen6_ggtt_insert_page(struct i915_address_space *vm,
@@ -1036,6 +1257,17 @@ static int gen8_gmch_probe(struct i915_ggtt *ggtt)
 			I915_VMA_GLOBAL_BIND | I915_VMA_LOCAL_BIND;
 	}
 
+	if (i915_ggtt_require_binder(i915)) {
+		ggtt->vm.scratch_range = gen8_ggtt_scratch_range_bind;
+		ggtt->vm.insert_page = gen8_ggtt_insert_page_bind;
+		ggtt->vm.insert_entries = gen8_ggtt_insert_entries_bind;
+		/*
+		 * On GPU is hung, we might bind VMAs for error capture.
+		 * Fallback to CPU GGTT updates in that case.
+		 */
+		ggtt->vm.raw_insert_page = gen8_ggtt_insert_page;
+	}
+
 	if (intel_uc_wants_guc(&ggtt->vm.gt->uc) &&
 	    intel_uc_wants_guc_submission(&ggtt->vm.gt->uc))
 		ggtt->invalidate = guc_ggtt_invalidate;
@@ -1208,6 +1440,71 @@ static int gen6_gmch_probe(struct i915_ggtt *ggtt)
 	return ggtt_probe_common(ggtt, size);
 }
 
+static void ggtt_insert_page_vf_relay_wa(struct i915_address_space *vm, dma_addr_t addr, u64 offset,
+					 unsigned int pat_index, u32 flags)
+{
+	struct intel_iov *iov = &vm->gt->iov;
+	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	mutex_lock(&iov->vf.ptes_buffer.lock);
+
+	intel_iov_ggtt_vf_update_pte(iov, offset, ggtt->vm.pte_encode(addr, pat_index, flags));
+	intel_iov_ggtt_vf_flush_ptes(iov);
+
+	mutex_unlock(&iov->vf.ptes_buffer.lock);
+
+	ggtt->invalidate(ggtt);
+}
+
+static void ggtt_insert_entries_vf_relay_wa(struct i915_address_space *vm,
+					    struct i915_vma_resource *vma_res,
+					    unsigned int pat_index, u32 flags)
+{
+	struct i915_ggtt *ggtt = i915_vm_to_ggtt(vm);
+	struct intel_iov *iov = &vm->gt->iov;
+	const gen8_pte_t pte_encode = ggtt->vm.pte_encode(0, pat_index, flags);
+	u64 gte;
+	u64 end;
+	struct sgt_iter iter;
+	dma_addr_t addr;
+
+	GEM_BUG_ON(!intel_iov_is_vf(iov));
+
+	gte = vma_res->start - vma_res->guard;
+	end = gte + vma_res->guard;
+
+	mutex_lock(&iov->vf.ptes_buffer.lock);
+
+	while (gte < end) {
+		intel_iov_ggtt_vf_update_pte(iov, gte, vm->scratch[0]->encode);
+		gte += I915_GTT_PAGE_SIZE;
+	}
+	end += vma_res->node_size + vma_res->guard;
+
+	for_each_sgt_daddr(addr, iter, vma_res->bi.pages) {
+		intel_iov_ggtt_vf_update_pte(iov, gte, pte_encode | addr);
+		gte += I915_GTT_PAGE_SIZE;
+	}
+	GEM_BUG_ON(gte > end);
+
+	/* Fill the allocated but "unused" space beyond the end of the buffer */
+	while (gte < end) {
+		intel_iov_ggtt_vf_update_pte(iov, gte, vm->scratch[0]->encode);
+		gte += I915_GTT_PAGE_SIZE;
+	}
+
+	/*
+	 * We want to flush the TLBs only after we're certain all the PTE
+	 * updates have finished.
+	 */
+	intel_iov_ggtt_vf_flush_ptes(iov);
+	mutex_unlock(&iov->vf.ptes_buffer.lock);
+
+	ggtt->invalidate(ggtt);
+}
+
 static int gen12vf_ggtt_probe(struct i915_ggtt *ggtt)
 {
 	struct drm_i915_private *i915 = ggtt->vm.i915;
@@ -1226,10 +1523,19 @@ static int gen12vf_ggtt_probe(struct i915_ggtt *ggtt)
 	/* can't use roundup_pow_of_two(GUC_GGTT_TOP); */
 	ggtt->vm.total = 1ULL << (ilog2(GUC_GGTT_TOP - 1) + 1);
 	ggtt->vm.cleanup = gen6_gmch_remove;
-	ggtt->vm.insert_page = gen8_ggtt_insert_page;
 	ggtt->vm.clear_range = nop_clear_range;
 
-	ggtt->vm.insert_entries = gen8_ggtt_insert_entries;
+	/* Wa_22018453856 */
+	if (IS_METEORLAKE(i915)) {
+		IOV_DEBUG(&ggtt->vm.gt->iov,
+			  "VF update GGTT via VF2PF relay WA is enbaled!\n");
+		ggtt->vm.insert_page = ggtt_insert_page_vf_relay_wa;
+		ggtt->vm.insert_entries = ggtt_insert_entries_vf_relay_wa;
+
+	} else {
+		ggtt->vm.insert_page = gen8_ggtt_insert_page;
+		ggtt->vm.insert_entries = gen8_ggtt_insert_entries;
+	}
 
 	/* can't use guc_ggtt_invalidate() */
 	ggtt->invalidate = gen12vf_ggtt_invalidate;
@@ -1500,4 +1806,106 @@ void i915_ggtt_set_space_owner(struct i915_ggtt *ggtt, u16 vfid,
 	}
 
 	ggtt->invalidate(ggtt);
+}
+
+static inline unsigned int __ggtt_size_to_ptes_size(u64 ggtt_size)
+{
+	GEM_BUG_ON(!IS_ALIGNED(ggtt_size, I915_GTT_MIN_ALIGNMENT));
+
+	return (ggtt_size >> PAGE_SHIFT) * sizeof(gen8_pte_t);
+}
+
+static void ggtt_pte_clear_vfid(void *buf, u64 size)
+{
+	while (size) {
+		*(gen8_pte_t *)buf &= ~TGL_GGTT_PTE_VFID_MASK;
+
+		buf += sizeof(gen8_pte_t);
+		size -= sizeof(gen8_pte_t);
+	}
+}
+
+/**
+ * i915_ggtt_save_ptes - copy GGTT PTEs to preallocated buffer
+ * @ggtt: the &struct i915_ggtt
+ * @node: the &struct drm_mm_node - the @node->start is used as the start offset for save
+ * @buf: preallocated buffer in which PTEs will be saved
+ * @size: size of prealocated buffer (in bytes)
+ *        - must be sizeof(gen8_pte_t) aligned
+ * @flags: function flags:
+ *         - #I915_GGTT_SAVE_PTES_NO_VFID BIT - save PTEs without VFID
+ *
+ * Returns: size of the buffer used (or needed if both @buf and @size are (0)) to store all PTEs
+ *          for a given node, -EINVAL if one of @buf or @size is 0.
+ */
+int i915_ggtt_save_ptes(struct i915_ggtt *ggtt, const struct drm_mm_node *node, void *buf,
+			unsigned int size, unsigned int flags)
+{
+	gen8_pte_t __iomem *gtt_entries = ggtt->gsm;
+
+	if (!buf && !size)
+		return __ggtt_size_to_ptes_size(node->size);
+
+	if (!buf || !size)
+		return -EINVAL;
+
+	GEM_BUG_ON(!IS_ALIGNED(size, sizeof(gen8_pte_t)));
+	GEM_WARN_ON(size > __ggtt_size_to_ptes_size(SZ_4G));
+
+	if (size < __ggtt_size_to_ptes_size(node->size))
+		return -ENOSPC;
+	size = __ggtt_size_to_ptes_size(node->size);
+
+	gtt_entries += node->start >> PAGE_SHIFT;
+
+	memcpy_fromio(buf, gtt_entries, size);
+
+	if (flags & I915_GGTT_SAVE_PTES_NO_VFID)
+		ggtt_pte_clear_vfid(buf, size);
+
+	return size;
+}
+
+/**
+ * i915_ggtt_restore_ptes() -  restore GGTT PTEs from buffer
+ * @ggtt: the &struct i915_ggtt
+ * @node: the &struct drm_mm_node - the @node->start is used as the start offset for restore
+ * @buf: buffer from which PTEs will be restored
+ * @size: size of prealocated buffer (in bytes)
+ *        - must be sizeof(gen8_pte_t) aligned
+ * @flags: function flags:
+ *         - #I915_GGTT_RESTORE_PTES_VFID_MASK - VFID for restored PTEs
+ *         - #I915_GGTT_RESTORE_PTES_NEW_VFID - restore PTEs with new VFID
+ *           (from #I915_GGTT_RESTORE_PTES_VFID_MASK)
+ *
+ * Returns: 0 on success, -ENOSPC if @node->size is less than size.
+ */
+int i915_ggtt_restore_ptes(struct i915_ggtt *ggtt, const struct drm_mm_node *node, const void *buf,
+			   unsigned int size, unsigned int flags)
+{
+	gen8_pte_t __iomem *gtt_entries = ggtt->gsm;
+	u32 vfid = FIELD_GET(I915_GGTT_RESTORE_PTES_VFID_MASK, flags);
+	gen8_pte_t pte;
+
+	GEM_BUG_ON(!size);
+	GEM_BUG_ON(!IS_ALIGNED(size, sizeof(gen8_pte_t)));
+
+	if (size > __ggtt_size_to_ptes_size(node->size))
+		return -ENOSPC;
+
+	gtt_entries += node->start >> PAGE_SHIFT;
+
+	while (size) {
+		pte = *(gen8_pte_t *)buf;
+		if (flags & I915_GGTT_RESTORE_PTES_NEW_VFID)
+			pte |= tgl_prepare_vf_pte_vfid(vfid);
+		gen8_set_pte(gtt_entries++, pte);
+
+		buf += sizeof(gen8_pte_t);
+		size -= sizeof(gen8_pte_t);
+	}
+
+	ggtt->invalidate(ggtt);
+
+	return 0;
 }

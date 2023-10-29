@@ -189,7 +189,6 @@ fw_domain_wait_ack_clear(const struct intel_uncore_forcewake_domain *d)
 			"%s: timed out waiting for forcewake ack to clear.\n",
 			intel_uncore_forcewake_domain_to_str(d->id));
 
-	dump_stack();
 	add_taint_for_CI(d->uncore->i915, TAINT_WARN); /* CI now unreliable */
 }
 
@@ -268,7 +267,6 @@ fw_domain_wait_ack_set(const struct intel_uncore_forcewake_domain *d)
 		drm_err(&d->uncore->i915->drm,
 			"%s: timed out waiting for forcewake ack request.\n",
 			intel_uncore_forcewake_domain_to_str(d->id));
-		dump_stack();
 		add_taint_for_CI(d->uncore->i915, TAINT_WARN); /* CI now unreliable */
 	}
 }
@@ -2612,12 +2610,12 @@ static void uncore_raw_init(struct intel_uncore *uncore)
 	if (intel_vgpu_active(uncore->i915)) {
 		ASSIGN_RAW_WRITE_MMIO_VFUNCS(uncore, vgpu);
 		ASSIGN_RAW_READ_MMIO_VFUNCS(uncore, vgpu);
-	} else if (GRAPHICS_VER(uncore->i915) == 5) {
-		ASSIGN_RAW_WRITE_MMIO_VFUNCS(uncore, gen5);
-		ASSIGN_RAW_READ_MMIO_VFUNCS(uncore, gen5);
 	} else if (IS_SRIOV_VF(uncore->i915)) {
 		ASSIGN_RAW_WRITE_MMIO_VFUNCS(uncore, gen2);
 		ASSIGN_RAW_READ_MMIO_VFUNCS(uncore, vf);
+	} else if (GRAPHICS_VER(uncore->i915) == 5) {
+		ASSIGN_RAW_WRITE_MMIO_VFUNCS(uncore, gen5);
+		ASSIGN_RAW_READ_MMIO_VFUNCS(uncore, gen5);
 	} else {
 		ASSIGN_RAW_WRITE_MMIO_VFUNCS(uncore, gen2);
 		ASSIGN_RAW_READ_MMIO_VFUNCS(uncore, gen2);
@@ -2761,7 +2759,7 @@ int intel_uncore_init_mmio(struct intel_uncore *uncore)
 		return -ENODEV;
 	}
 
-	if (GRAPHICS_VER(i915) > 5 && !IS_SRIOV_VF(i915) && !intel_vgpu_active(i915))
+	if (!IS_SRIOV_VF(i915) && !intel_vgpu_active(i915) && GRAPHICS_VER(i915))
 		uncore->flags |= UNCORE_HAS_FORCEWAKE;
 
 	if (!intel_uncore_has_forcewake(uncore)) {
@@ -2783,7 +2781,7 @@ int intel_uncore_init_mmio(struct intel_uncore *uncore)
 	if (IS_VALLEYVIEW(i915) || IS_CHERRYVIEW(i915))
 		uncore->flags |= UNCORE_HAS_DBG_UNCLAIMED;
 
-	if (IS_GRAPHICS_VER(i915, 6, 7))
+	if (!IS_SRIOV_VF(i915) && IS_GRAPHICS_VER(i915, 6, 7))
 		uncore->flags |= UNCORE_HAS_FIFO;
 
 	/* clear out unclaimed reg detection bit */

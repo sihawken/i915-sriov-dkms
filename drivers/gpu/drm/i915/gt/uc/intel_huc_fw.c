@@ -27,7 +27,6 @@ struct mtl_huc_load_msg_out {
 int intel_huc_fw_load_and_auth_via_gsc_cs(struct intel_huc *huc)
 {
 	struct intel_gt *gt = huc_to_gt(huc);
-	struct drm_i915_private *i915 = gt->i915;
 	struct drm_i915_gem_object *obj;
 	struct mtl_huc_load_msg_in *msg_in;
 	struct mtl_huc_load_msg_out *msg_out;
@@ -43,7 +42,7 @@ int intel_huc_fw_load_and_auth_via_gsc_cs(struct intel_huc *huc)
 	pkt_offset = i915_ggtt_offset(huc->heci_pkt);
 
 	pkt_vaddr = i915_gem_object_pin_map_unlocked(obj,
-						     i915_coherent_map_type(i915, obj, true));
+						     i915_coherent_map_type(gt, obj, true));
 	if (IS_ERR(pkt_vaddr))
 		return PTR_ERR(pkt_vaddr);
 
@@ -124,7 +123,6 @@ struct mtl_huc_auth_msg_out {
 int intel_huc_fw_auth_via_gsccs(struct intel_huc *huc)
 {
 	struct intel_gt *gt = huc_to_gt(huc);
-	struct drm_i915_private *i915 = gt->i915;
 	struct drm_i915_gem_object *obj;
 	struct mtl_huc_auth_msg_in *msg_in;
 	struct mtl_huc_auth_msg_out *msg_out;
@@ -140,7 +138,7 @@ int intel_huc_fw_auth_via_gsccs(struct intel_huc *huc)
 	pkt_offset = i915_ggtt_offset(huc->heci_pkt);
 
 	pkt_vaddr = i915_gem_object_pin_map_unlocked(obj,
-						     i915_coherent_map_type(i915, obj, true));
+						     i915_coherent_map_type(gt, obj, true));
 	if (IS_ERR(pkt_vaddr))
 		return PTR_ERR(pkt_vaddr);
 

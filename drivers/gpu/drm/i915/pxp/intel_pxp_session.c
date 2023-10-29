@@ -122,6 +122,7 @@ static void __init_session_entry(struct intel_pxp *pxp,
  * create_session_entry - Create a new session entry with provided info.
  * @pxp: pointer to pxp struct
  * @drmfile: pointer to drm_file
+ * @protection_mode: session protection mode type
  * @session_index: Numeric session identifier.
  *
  * Return: status. 0 means creation is successful.
@@ -173,6 +174,7 @@ static void pxp_fini_arb_session(struct intel_pxp *pxp)
  * intel_pxp_sm_ioctl_reserve_session - To reserve an available protected session.
  * @pxp: pointer to pxp struct
  * @drmfile: pointer to drm_file.
+ * @protection_mode: session protection mode type
  * @pxp_tag: Numeric session identifier returned back to caller.
  *
  * Return: status. 0 means reserve is successful.
@@ -202,8 +204,16 @@ int intel_pxp_sm_ioctl_reserve_session(struct intel_pxp *pxp, struct drm_file *d
 		return PRELIM_DRM_I915_PXP_OP_STATUS_SESSION_NOT_AVAILABLE;
 
 	ret = pxp_wait_for_session_state(pxp, idx, false);
-	if (ret)
-		return PRELIM_DRM_I915_PXP_OP_STATUS_RETRY_REQUIRED;
+	if (ret) {
+		/* force termination of old reservation */
+		ret = intel_pxp_terminate_session(pxp, idx);
+		if (ret)
+			return PRELIM_DRM_I915_PXP_OP_STATUS_RETRY_REQUIRED;
+		/* wait again for HW state */
+		ret = pxp_wait_for_session_state(pxp, idx, false);
+		if (ret)
+			return PRELIM_DRM_I915_PXP_OP_STATUS_RETRY_REQUIRED;
+	}
 
 	ret = create_session_entry(pxp, drmfile,
 				   protection_mode, idx);
@@ -370,13 +380,15 @@ int intel_pxp_terminate_session(struct intel_pxp *pxp, u32 id)
 	if (ret)
 		drm_dbg(&pxp->ctrl_gt->i915->drm, "Session state-%d did not clear\n", id);
 
-	if (!HAS_ENGINE(pxp->ctrl_gt, GSC0))
+	if (HAS_ENGINE(pxp->ctrl_gt, GSC0))
+		intel_pxp_gsccs_end_fw_sessions(pxp, BIT(id));
+	else
 		intel_pxp_tee_end_fw_sessions(pxp, BIT(id));
 
 	return ret;
 }
 
-static int pxp_terminate_all_sessions(struct intel_pxp *pxp)
+static int pxp_terminate_all_sessions(struct intel_pxp *pxp, u32 active_hw_slots)
 {
 	int ret;
 	u32 idx;
@@ -391,6 +403,14 @@ static int pxp_terminate_all_sessions(struct intel_pxp *pxp)
 		pxp->hwdrm_sessions[idx]->is_valid = false;
 		mask |= BIT(idx);
 	}
+	/*
+	 * if a user-space (multi-session client) reserved a session but
+	 * timed out on pxp_wait_for_session_state, its possible that SW
+	 * state of pxp->reserved_sessions maybe out of sync with HW.
+	 * So lets combine active_hw_slots in for termination which would
+	 * normally match pxp->reserved_sessions
+	 */
+	mask |= active_hw_slots;
 
 	if (mask) {
 		ret = intel_pxp_terminate_sessions(pxp, mask);
@@ -423,7 +443,7 @@ static int pxp_terminate_all_sessions_and_global(struct intel_pxp *pxp)
 	active_sip_slots = intel_uncore_read(gt->uncore, KCR_SIP(pxp->kcr_base));
 
 	/* terminate the hw sessions */
-	ret = pxp_terminate_all_sessions(pxp);
+	ret = pxp_terminate_all_sessions(pxp, active_sip_slots);
 	if (ret) {
 		drm_err(&gt->i915->drm, "Failed to submit session termination\n");
 		goto out;
@@ -437,9 +457,8 @@ static int pxp_terminate_all_sessions_and_global(struct intel_pxp *pxp)
 
 	intel_uncore_write(gt->uncore, KCR_GLOBAL_TERMINATE(pxp->kcr_base), 1);
 
-	/* muti-session support not yet enabled for GSCCS */
-	if (HAS_ENGINE(gt, GSC0) && (active_sip_slots & BIT(ARB_SESSION)))
-		intel_pxp_gsccs_end_arb_fw_session(pxp, ARB_SESSION);
+	if (HAS_ENGINE(gt, GSC0))
+		intel_pxp_gsccs_end_fw_sessions(pxp, active_sip_slots);
 	else
 		intel_pxp_tee_end_fw_sessions(pxp, active_sip_slots);
 
@@ -467,8 +486,10 @@ void intel_pxp_terminate(struct intel_pxp *pxp, bool post_invalidation_needs_res
 static void pxp_terminate_complete(struct intel_pxp *pxp)
 {
 	/* Re-create the arb session after teardown handle complete */
-	if (fetch_and_zero(&pxp->hw_state_invalidated))
+	if (pxp->hw_state_invalidated) {
 		pxp_create_arb_session(pxp);
+		pxp->hw_state_invalidated = false;
+	}
 
 	complete_all(&pxp->termination);
 }

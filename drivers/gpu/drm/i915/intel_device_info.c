@@ -226,18 +226,6 @@ static const u16 subplatform_g12_ids[] = {
 	INTEL_DG2_G12_IDS(0),
 };
 
-static const u16 subplatform_m_ids[] = {
-	INTEL_MTL_M_IDS(0),
-};
-
-static const u16 subplatform_p_ids[] = {
-	INTEL_MTL_P_IDS(0),
-};
-
-static const u16 subplatform_arl_p_ids[] = {
-	INTEL_ARL_P_IDS(0),
-};
-
 static bool find_devid(u16 id, const u16 *p, unsigned int num)
 {
 	for (; num; num--, p++) {
@@ -299,15 +287,6 @@ static void intel_device_info_subplatform_init(struct drm_i915_private *i915)
 	} else if (find_devid(devid, subplatform_g12_ids,
 			      ARRAY_SIZE(subplatform_g12_ids))) {
 		mask = BIT(INTEL_SUBPLATFORM_G12);
-	} else if (find_devid(devid, subplatform_m_ids,
-			      ARRAY_SIZE(subplatform_m_ids))) {
-		mask = BIT(INTEL_SUBPLATFORM_M);
-	} else if (find_devid(devid, subplatform_p_ids,
-			      ARRAY_SIZE(subplatform_p_ids))) {
-		mask = BIT(INTEL_SUBPLATFORM_P);
-	} else if (find_devid(devid, subplatform_arl_p_ids,
-			      ARRAY_SIZE(subplatform_arl_p_ids))) {
-		mask = BIT(INTEL_SUBPLATFORM_ARL_P);
 	}
 
 	GEM_BUG_ON(mask & ~INTEL_SUBPLATFORM_MASK);
@@ -366,12 +345,20 @@ static void intel_ipver_early_init(struct drm_i915_private *i915)
 		return;
 	}
 
-	/* VF can't access IPVER registers directly */
 	if (IS_SRIOV_VF(i915)) {
-		/* 14018060378 not ready yet, use hardcoded values from INTEL_INFO */
-		drm_info(&i915->drm, "Beware, driver is using hardcoded IPVER values!\n");
+		/*
+		 * VF can't access GMDID registers and must use H2G to get their values from GuC.
+		 * Use hardcoded preliminary IP versions until we finish GuC initialization.
+		 */
+		drm_info(&i915->drm, "preliminary graphics version %u.%02u media version %u.%02u\n",
+			 RUNTIME_INFO(i915)->graphics.ip.ver, RUNTIME_INFO(i915)->graphics.ip.rel,
+			 RUNTIME_INFO(i915)->media.ip.ver, RUNTIME_INFO(i915)->media.ip.rel);
+#if IS_ENABLED(CONFIG_DRM_I915_DEBUG)
 		drm_WARN_ON(&i915->drm, RUNTIME_INFO(i915)->graphics.ip.ver < 12);
-		drm_WARN_ON(&i915->drm, !RUNTIME_INFO(i915)->media.ip.ver);
+		drm_WARN_ON(&i915->drm, RUNTIME_INFO(i915)->media.ip.ver < 13);
+		RUNTIME_INFO(i915)->graphics.ip.preliminary = true;
+		RUNTIME_INFO(i915)->media.ip.preliminary = true;
+#endif
 		return;
 	}
 

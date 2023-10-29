@@ -20,12 +20,13 @@
 #include "intel_pxp_types.h"
 
 static bool
-is_fw_err_platform_config(u32 type)
+is_fw_err_platform_config(struct intel_pxp *pxp, u32 type)
 {
 	switch (type) {
 	case PXP_STATUS_ERROR_API_VERSION:
 	case PXP_STATUS_PLATFCONFIG_KF1_NOVERIF:
 	case PXP_STATUS_PLATFCONFIG_KF1_BAD:
+		pxp->platform_cfg_is_bad = true;
 		return true;
 	default:
 		break;
@@ -50,13 +51,14 @@ fw_err_to_string(u32 type)
 	return NULL;
 }
 
-static int intel_pxp_tee_io_message(struct intel_pxp *pxp,
-				    void *msg_in, u32 msg_in_size,
-				    void *msg_out, u32 msg_out_max_size,
-				    u32 *msg_out_rcv_size)
+int intel_pxp_tee_io_message(struct intel_pxp *pxp,
+			     void *msg_in, u32 msg_in_size,
+			     void *msg_out, u32 msg_out_max_size,
+			     u32 *msg_out_rcv_size)
 {
 	struct drm_i915_private *i915 = pxp->ctrl_gt->i915;
 	struct i915_pxp_component *pxp_component = pxp->pxp_component;
+	u8 tmp_drop_buf[64];
 	int ret = 0;
 
 	mutex_lock(&pxp->tee_mutex);
@@ -70,14 +72,29 @@ static int intel_pxp_tee_io_message(struct intel_pxp *pxp,
 		goto unlock;
 	}
 
+	if (pxp->mei_pxp_last_msg_interrupted) {
+		/* read and drop data from the previous iteration */
+		ret = pxp_component->ops->recv(pxp_component->tee_dev, &tmp_drop_buf, 64);
+		if (ret == -EINTR)
+			goto unlock;
+
+		pxp->mei_pxp_last_msg_interrupted = false;
+	}
+
 	ret = pxp_component->ops->send(pxp_component->tee_dev, msg_in, msg_in_size);
 	if (ret) {
+		/* flag on next msg to drop interrupted msg */
+		if (ret == -EINTR)
+			pxp->mei_pxp_last_msg_interrupted = true;
 		drm_err(&i915->drm, "Failed to send PXP TEE message\n");
 		goto unlock;
 	}
 
 	ret = pxp_component->ops->recv(pxp_component->tee_dev, msg_out, msg_out_max_size);
 	if (ret < 0) {
+		/* flag on next msg to drop interrupted msg */
+		if (ret == -EINTR)
+			pxp->mei_pxp_last_msg_interrupted = true;
 		drm_err(&i915->drm, "Failed to receive PXP TEE message\n");
 		goto unlock;
 	}
@@ -245,7 +262,7 @@ static int alloc_streaming_command(struct intel_pxp *pxp)
 	}
 
 	/* map the lmem into the virtual memory pointer */
-	cmd = i915_gem_object_pin_map_unlocked(obj, i915_coherent_map_type(i915, obj, true));
+	cmd = i915_gem_object_pin_map_unlocked(obj, i915_coherent_map_type(pxp->ctrl_gt, obj, true));
 	if (IS_ERR(cmd)) {
 		drm_err(&i915->drm, "Failed to map gsc message page!\n");
 		err = PTR_ERR(cmd);
@@ -339,7 +356,7 @@ int intel_pxp_tee_cmd_create_arb_session(struct intel_pxp *pxp,
 	if (ret) {
 		drm_err(&i915->drm, "Failed to send tee msg init arb session, ret=[%d]\n", ret);
 	} else if (msg_out.header.status != 0) {
-		if (is_fw_err_platform_config(msg_out.header.status)) {
+		if (is_fw_err_platform_config(pxp, msg_out.header.status)) {
 			drm_info_once(&i915->drm,
 				      "PXP init-arb-session-%d failed due to BIOS/SOC:0x%08x:%s\n",
 				      arb_session_id, msg_out.header.status,
@@ -387,7 +404,7 @@ try_again:
 		drm_err(&i915->drm, "Failed to send tee msg for inv-stream-key-%u, ret=[%d]\n",
 			session_id, ret);
 	} else if (msg_out.header.status != 0) {
-		if (is_fw_err_platform_config(msg_out.header.status)) {
+		if (is_fw_err_platform_config(pxp, msg_out.header.status)) {
 			drm_info_once(&i915->drm,
 				      "PXP inv-stream-key-%u failed due to BIOS/SOC :0x%08x:%s\n",
 				      session_id, msg_out.header.status,
@@ -411,59 +428,3 @@ void intel_pxp_tee_end_fw_sessions(struct intel_pxp *pxp, u32 sessions_mask)
 			intel_pxp_tee_end_one_fw_session(pxp, n);
 	}
 }
-
-static bool tee_ioctl_buffer_size_valid(u32 size)
-{
-	return size > 0 && size <= SZ_64K;
-}
-
-int intel_pxp_tee_ioctl_io_message(struct intel_pxp *pxp,
-				   struct prelim_drm_i915_pxp_tee_io_message_params *params)
-{
-	struct drm_i915_private *i915 = pxp->ctrl_gt->i915;
-	void *msg_in = NULL;
-	void *msg_out = NULL;
-	int ret = 0;
-
-	if (!params->msg_in || !params->msg_out ||
-	    !tee_ioctl_buffer_size_valid(params->msg_out_buf_size) ||
-	    !tee_ioctl_buffer_size_valid(params->msg_in_size))
-		return -EINVAL;
-
-	msg_in = kzalloc(params->msg_in_size, GFP_KERNEL);
-	if (!msg_in)
-		return -ENOMEM;
-
-	msg_out = kzalloc(params->msg_out_buf_size, GFP_KERNEL);
-	if (!msg_out) {
-		ret = -ENOMEM;
-		goto end;
-	}
-
-	if (copy_from_user(msg_in, u64_to_user_ptr(params->msg_in), params->msg_in_size)) {
-		drm_dbg(&i915->drm, "Failed to copy_from_user for TEE message\n");
-		ret = -EFAULT;
-		goto end;
-	}
-
-	ret = intel_pxp_tee_io_message(pxp,
-				       msg_in, params->msg_in_size,
-				       msg_out, params->msg_out_buf_size,
-				       &params->msg_out_ret_size);
-	if (ret) {
-		drm_dbg(&i915->drm, "Failed to send/receive user TEE message\n");
-		goto end;
-	}
-
-	if (copy_to_user(u64_to_user_ptr(params->msg_out), msg_out, params->msg_out_ret_size)) {
-		drm_dbg(&i915->drm, "Failed copy_to_user for TEE message\n");
-		ret = -EFAULT;
-		goto end;
-	}
-
-end:
-	kfree(msg_in);
-	kfree(msg_out);
-	return ret;
-}
-

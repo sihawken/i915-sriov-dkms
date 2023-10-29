@@ -18,6 +18,7 @@
  *  |   |       |   - `GuC Self Config KLVs`_                                  |
  *  |   |       |   - `GuC VGT Policy KLVs`_                                   |
  *  |   |       |   - `GuC VF Configuration KLVs`_                             |
+ *  |   |       |   - `GuC Global Config KLVs`_                                |
  *  |   |       |                                                              |
  *  |   +-------+--------------------------------------------------------------+
  *  |   |  15:0 | **LEN** - length of VALUE (in 32bit dwords)                  |
@@ -307,5 +308,19 @@ enum {
 
 #define GUC_KLV_VF_CFG_BEGIN_CONTEXT_ID_KEY	0x8a0b
 #define GUC_KLV_VF_CFG_BEGIN_CONTEXT_ID_LEN	1u
+
+/**
+ * DOC: GuC Global Config KLVs
+ *
+ * Additional `GuC KLV`_ keys available for use with HOST2GUC_SELF_CFG_.
+ *
+ * _`GUC_KLV_GLOBAL_CFG_GMD_ID` : 0x3000
+ *      Contains raw value of the GMD_ID register (0xd8c or 0x380d8c).
+ *      Supported only on platforms with GMD (MTL+).
+ *      Requires VF ABI version 1.2+.
+ */
+
+#define GUC_KLV_GLOBAL_CFG_GMD_ID_KEY			0x3000
+#define GUC_KLV_GLOBAL_CFG_GMD_ID_LEN			1u
 
 #endif /* _ABI_GUC_KLVS_ABI_H */

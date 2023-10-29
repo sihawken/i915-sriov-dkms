@@ -1019,10 +1019,6 @@ static int ct_read(struct intel_guc_ct *ct, struct ct_incoming_msg **msg)
 	/* now update descriptor */
 	WRITE_ONCE(desc->head, head);
 
-	/*
-	 * Wa_22016122933: Making sure the head update is
-	 * visible to GuC right away
-	 */
 	intel_guc_write_barrier(ct_to_guc(ct));
 
 	return available - len;
@@ -1160,6 +1156,9 @@ static int ct_process_request(struct intel_guc_ct *ct, struct ct_incoming_msg *r
 	case INTEL_GUC_ACTION_SCHED_CONTEXT_MODE_DONE:
 		ret = intel_guc_sched_done_process_msg(guc, payload, len);
 		break;
+	case GUC_ACTION_GUC2HOST_SET_ENGINE_SCHED_DONE:
+		ret = intel_guc_process_set_engine_sched_done(guc, hxg, hxg_len);
+		break;
 	case INTEL_GUC_ACTION_CONTEXT_RESET_NOTIFICATION:
 		ret = intel_guc_context_reset_process_msg(guc, payload, len);
 		break;
@@ -1268,6 +1267,7 @@ static int ct_handle_event(struct intel_guc_ct *ct, struct ct_incoming_msg *requ
 	 * circular dependency if the space was returned there.
 	 */
 	switch (action) {
+	case GUC_ACTION_GUC2HOST_SET_ENGINE_SCHED_DONE:
 	case INTEL_GUC_ACTION_SCHED_CONTEXT_MODE_DONE:
 	case INTEL_GUC_ACTION_DEREGISTER_CONTEXT_DONE:
 	case INTEL_GUC_ACTION_TLB_INVALIDATION_DONE:

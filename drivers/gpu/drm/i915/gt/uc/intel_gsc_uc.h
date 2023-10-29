@@ -46,6 +46,11 @@ struct intel_gsc_uc {
 	u32 gsc_work_actions; /* protected by gt->irq_lock */
 #define GSC_ACTION_FW_LOAD BIT(0)
 #define GSC_ACTION_SW_PROXY BIT(1)
+	/*
+	 * Worker used to disable GSC engine in GuC
+	 * for the purpose of Wa_14019103365
+	 */
+	struct work_struct disable_gsc_engine_work;
 
 	struct {
 		struct i915_gsc_proxy_component *component;

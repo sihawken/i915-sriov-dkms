@@ -23,6 +23,11 @@ subdir-ccflags-y += $(call cc-option, -Wunused-but-set-variable)
 subdir-ccflags-y += $(call cc-disable-warning, frame-address)
 subdir-ccflags-$(CONFIG_DRM_I915_WERROR) += -Werror
 
+# Fine grained warnings disable
+CFLAGS_i915_pci.o = $(call cc-disable-warning, override-init)
+CFLAGS_display/intel_display_device.o = $(call cc-disable-warning, override-init)
+CFLAGS_display/intel_fbdev.o = $(call cc-disable-warning, override-init)
+
 subdir-ccflags-y += -I$(srctree)/$(src)
 
 # Please keep these build lists sorted!
@@ -224,6 +229,7 @@ iov-y += \
 	gt/iov/intel_iov.o \
 	gt/iov/intel_iov_debugfs.o \
 	gt/iov/intel_iov_event.o \
+	gt/iov/intel_iov_ggtt.o \
 	gt/iov/intel_iov_memirq.o \
 	gt/iov/intel_iov_provisioning.o \
 	gt/iov/intel_iov_query.o \

@@ -33,11 +33,8 @@ EXTRA_CFLAGS += -DCONFIG_PM -DCONFIG_DEBUG_FS -DCONFIG_PNP -DCONFIG_PROC_FS \
 				-DCONFIG_MMU_NOTIFIER -DCONFIG_DRM_I915_COMPRESS_ERROR \
 				-DCONFIG_COMPAT -DCONFIG_PERF_EVENTS -DCONFIG_PCI_IOV \
 				-DCONFIG_X86 -DCONFIG_ACPI -DCONFIG_DRM_FBDEV_EMULATION \
-				-DCONFIG_PMIC_OPREGION -DCONFIG_SWIOTLB -DCONFIG_DRM_I915_PXP
-
+				-DCONFIG_PMIC_OPREGION -DCONFIG_SWIOTLB -DCONFIG_DRM_I915_PXP 
 KBUILD_MODPOST_WARN = 1
-
-# Please keep these build lists sorted!
 
 # core driver code
 i915-y += i915_driver.o \
@@ -236,6 +233,7 @@ iov-y += \
 	gt/iov/intel_iov.o \
 	gt/iov/intel_iov_debugfs.o \
 	gt/iov/intel_iov_event.o \
+	gt/iov/intel_iov_ggtt.o \
 	gt/iov/intel_iov_memirq.o \
 	gt/iov/intel_iov_provisioning.o \
 	gt/iov/intel_iov_query.o \
@@ -398,6 +396,30 @@ i915-$(CONFIG_DRM_I915_SELFTEST) += \
 # virtual gpu code
 i915-y += i915_vgpu.o
 
+kvmgt-$(CONFIG_DRM_I915_GVT) += \
+	gvt/aperture_gm.o \
+	gvt/cfg_space.o \
+	gvt/cmd_parser.o \
+	gvt/debugfs.o \
+	gvt/display.o \
+	gvt/dmabuf.o \
+	gvt/edid.o \
+	gvt/execlist.o \
+	gvt/fb_decoder.o \
+	gvt/firmware.o \
+	gvt/gtt.o \
+	gvt/handlers.o \
+	gvt/interrupt.o \
+	gvt/kvmgt.o \
+	gvt/mmio.o \
+	gvt/mmio_context.o \
+	gvt/opregion.o \
+	gvt/page_track.o \
+	gvt/sched_policy.o \
+	gvt/scheduler.o \
+	gvt/trace_points.o \
+	gvt/vgpu.o
+	
 i915-$(CONFIG_DRM_I915_GVT) += \
 	intel_gvt.o \
 	intel_gvt_mmio_table.o
@@ -406,6 +428,7 @@ CFLAGS_i915_trace_points.o := -I$(KBUILD_EXTMOD)/drivers/gpu/drm/i915
 
 
 i915-y := $(addprefix $(DRMD)i915/,$(i915-y))
+kvmgt-y := $(addprefix $(DRMD)i915/,$(kvmgt-y))
 
 # ----------------------------------------------------------------------------
 # common to all modules
@@ -422,5 +445,6 @@ LINUXINCLUDE := \
     $(LINUXINCLUDE)
 
 obj-m := i915.o
+obj-m += kvmgt.o
 
 .PHONY: default clean modules load unload install patch

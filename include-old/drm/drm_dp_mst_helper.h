@@ -138,7 +138,12 @@ struct drm_dp_mst_port {
 	 * @cached_edid: for DP logical ports - make tiling work by ensuring
 	 * that the EDID for all connectors is read immediately.
 	 */
-	const struct drm_edid *cached_edid;
+	struct edid *cached_edid;
+	/**
+	 * @has_audio: Tracks whether the sink connector to this port is
+	 * audio-capable.
+	 */
+	bool has_audio;
 
 	/**
 	 * @fec_capable: bool indicating if FEC can be supported up to that
@@ -819,12 +824,7 @@ drm_dp_mst_detect_port(struct drm_connector *connector,
 		       struct drm_dp_mst_topology_mgr *mgr,
 		       struct drm_dp_mst_port *port);
 
-const struct drm_edid *drm_dp_mst_edid_read(struct drm_connector *connector,
-					    struct drm_dp_mst_topology_mgr *mgr,
-					    struct drm_dp_mst_port *port);
-struct edid *drm_dp_mst_get_edid(struct drm_connector *connector,
-				 struct drm_dp_mst_topology_mgr *mgr,
-				 struct drm_dp_mst_port *port);
+struct edid *drm_dp_mst_get_edid(struct drm_connector *connector, struct drm_dp_mst_topology_mgr *mgr, struct drm_dp_mst_port *port);
 
 int drm_dp_get_vc_payload_bw(const struct drm_dp_mst_topology_mgr *mgr,
 			     int link_rate, int link_lane_count);
@@ -841,8 +841,7 @@ int drm_dp_add_payload_part2(struct drm_dp_mst_topology_mgr *mgr,
 			     struct drm_dp_mst_atomic_payload *payload);
 void drm_dp_remove_payload(struct drm_dp_mst_topology_mgr *mgr,
 			   struct drm_dp_mst_topology_state *mst_state,
-			   const struct drm_dp_mst_atomic_payload *old_payload,
-			   struct drm_dp_mst_atomic_payload *new_payload);
+			   struct drm_dp_mst_atomic_payload *payload);
 
 int drm_dp_check_act_status(struct drm_dp_mst_topology_mgr *mgr);
 
@@ -867,9 +866,6 @@ void drm_dp_mst_connector_early_unregister(struct drm_connector *connector,
 struct drm_dp_mst_topology_state *
 drm_atomic_get_mst_topology_state(struct drm_atomic_state *state,
 				  struct drm_dp_mst_topology_mgr *mgr);
-struct drm_dp_mst_topology_state *
-drm_atomic_get_old_mst_topology_state(struct drm_atomic_state *state,
-				      struct drm_dp_mst_topology_mgr *mgr);
 struct drm_dp_mst_topology_state *
 drm_atomic_get_new_mst_topology_state(struct drm_atomic_state *state,
 				      struct drm_dp_mst_topology_mgr *mgr);

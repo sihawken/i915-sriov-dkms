@@ -36,17 +36,17 @@ static const struct reg_whitelist reg_read_whitelist[] = {
 		.min_graphics_ver = 4,
 		.max_graphics_ver = 12,
 		.size = 8
-		}, {
+       }, {
 		.offset_ldw = KCR_SIP(GEN12_KCR_BASE),
 		.min_graphics_ver = 12,
 		.max_graphics_ver = 12,
 		.size = 4
-		}, {
+       }, {
 		.offset_ldw = KCR_SIP(MTL_KCR_BASE),
 		.min_graphics_ver = 12,
 		.max_graphics_ver = 12,
 		.size = 4
-	   }
+       }
 };
 
 int i915_reg_read_ioctl(struct drm_device *dev,

@@ -143,13 +143,13 @@
 #define GUC_ACTION_GUC2PF_RELAY_FROM_VF			0x5100
 
 #define GUC2PF_RELAY_FROM_VF_EVENT_MSG_MIN_LEN		(GUC_HXG_EVENT_MSG_MIN_LEN + 2u)
-#define GUC2PF_RELAY_FROM_VF_EVENT_MSG_MAX_LEN		(GUC2PF_RELAY_FROM_VF_EVENT_MSG_MIN_LEN + 60u)
+#define GUC2PF_RELAY_FROM_VF_EVENT_MSG_MAX_LEN		(GUC_CTB_HXG_MSG_MAX_LEN - GUC_CTB_MSG_MIN_LEN - 3u)
 #define GUC2PF_RELAY_FROM_VF_EVENT_MSG_0_MBZ		GUC_HXG_EVENT_MSG_0_DATA0
 #define GUC2PF_RELAY_FROM_VF_EVENT_MSG_1_VFID		GUC_HXG_EVENT_MSG_n_DATAn
 #define GUC2PF_RELAY_FROM_VF_EVENT_MSG_2_RELAY_ID	GUC_HXG_EVENT_MSG_n_DATAn
 #define GUC2PF_RELAY_FROM_VF_EVENT_MSG_3_RELAY_DATA1	GUC_HXG_EVENT_MSG_n_DATAn
 #define GUC2PF_RELAY_FROM_VF_EVENT_MSG_n_RELAY_DATAx	GUC_HXG_EVENT_MSG_n_DATAn
-#define GUC2PF_RELAY_FROM_VF_EVENT_MSG_NUM_RELAY_DATA	60u
+#define GUC2PF_RELAY_FROM_VF_EVENT_MSG_NUM_RELAY_DATA	(GUC2PF_RELAY_FROM_VF_EVENT_MSG_MAX_LEN - GUC2PF_RELAY_FROM_VF_EVENT_MSG_MIN_LEN)
 
 /**
  * DOC: PF2GUC_RELAY_TO_VF
@@ -184,13 +184,13 @@
 #define GUC_ACTION_PF2GUC_RELAY_TO_VF			0x5101
 
 #define PF2GUC_RELAY_TO_VF_REQUEST_MSG_MIN_LEN		(GUC_HXG_REQUEST_MSG_MIN_LEN + 2u)
-#define PF2GUC_RELAY_TO_VF_REQUEST_MSG_MAX_LEN		(PF2GUC_RELAY_TO_VF_REQUEST_MSG_MIN_LEN + 60u)
+#define PF2GUC_RELAY_TO_VF_REQUEST_MSG_MAX_LEN		(GUC_CTB_HXG_MSG_MAX_LEN - GUC_CTB_MSG_MIN_LEN - 3u)
 #define PF2GUC_RELAY_TO_VF_REQUEST_MSG_0_MBZ		GUC_HXG_REQUEST_MSG_0_DATA0
 #define PF2GUC_RELAY_TO_VF_REQUEST_MSG_1_VFID		GUC_HXG_REQUEST_MSG_n_DATAn
 #define PF2GUC_RELAY_TO_VF_REQUEST_MSG_2_RELAY_ID	GUC_HXG_REQUEST_MSG_n_DATAn
 #define PF2GUC_RELAY_TO_VF_REQUEST_MSG_3_RELAY_DATA1	GUC_HXG_REQUEST_MSG_n_DATAn
 #define PF2GUC_RELAY_TO_VF_REQUEST_MSG_n_RELAY_DATAx	GUC_HXG_REQUEST_MSG_n_DATAn
-#define PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA	60u
+#define PF2GUC_RELAY_TO_VF_REQUEST_MSG_NUM_RELAY_DATA	(PF2GUC_RELAY_TO_VF_REQUEST_MSG_MAX_LEN - PF2GUC_RELAY_TO_VF_REQUEST_MSG_MIN_LEN)
 
 /**
  * DOC: GUC2PF_MMIO_RELAY_SERVICE
@@ -445,5 +445,60 @@
 #define   GUC_PF_TRIGGER_VF_STOP			3
 #define   GUC_PF_TRIGGER_VF_FLR_START			4
 #define   GUC_PF_TRIGGER_VF_FLR_FINISH			5
+
+/**
+ * DOC: PF2GUC_SAVE_RESTORE_VF
+ *
+ * This message is used by the PF to migrate VF info state maintained by the GuC.
+ *
+ * This message must be sent as `CTB HXG Message`_.
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_HOST_                                |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_REQUEST_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 27:16 | DATA0 = **OPCODE** - operation to take:                      |
+ *  |   |       |                                                              |
+ *  |   |       |   - _`GUC_PF_OPCODE_VF_SAVE` = 0                             |
+ *  |   |       |   - _`GUC_PF_OPCODE_VF_RESTORE` = 1                          |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  15:0 | ACTION = _`GUC_ACTION_PF2GUC_SAVE_RESTORE_VF` = 0x550B       |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 1 |  31:0 | DATA1 = **VFID** - VF identifier                             |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 2 |  31:0 | DATA2 = **BUFF_LO** - lower 32-bits of GGTT offset to the 4K |
+ *  |   |       | buffer where the VF info will be save to or restored from.   |
+ *  +---+-------+--------------------------------------------------------------+
+ *  | 3 |  31:0 | DATA3 = **BUFF_HI** - upper 32-bits of GGTT offset to the 4K |
+ *  |   |       | buffer where the VF info will be save to or restored from.   |
+ *  +---+-------+--------------------------------------------------------------+
+ *
+ *  +---+-------+--------------------------------------------------------------+
+ *  |   | Bits  | Description                                                  |
+ *  +===+=======+==============================================================+
+ *  | 0 |    31 | ORIGIN = GUC_HXG_ORIGIN_GUC_                                 |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   | 30:28 | TYPE = GUC_HXG_TYPE_RESPONSE_SUCCESS_                        |
+ *  |   +-------+--------------------------------------------------------------+
+ *  |   |  27:0 | DATA0 = **USED** - size of buffer used (in bytes)            |
+ *  +---+-------+--------------------------------------------------------------+
+ */
+#define GUC_ACTION_PF2GUC_SAVE_RESTORE_VF		0x550B
+
+#define PF2GUC_SAVE_RESTORE_VF_REQUEST_MSG_LEN		(GUC_HXG_EVENT_MSG_MIN_LEN + 3u)
+#define PF2GUC_SAVE_RESTORE_VF_REQUEST_MSG_0_OPCODE	GUC_HXG_EVENT_MSG_0_DATA0
+#define   GUC_PF_OPCODE_VF_SAVE				0
+#define   GUC_PF_OPCODE_VF_RESTORE			1
+#define PF2GUC_SAVE_RESTORE_VF_REQUEST_MSG_1_VFID	GUC_HXG_EVENT_MSG_n_DATAn
+#define PF2GUC_SAVE_RESTORE_VF_REQUEST_MSG_2_BUFF_LO	GUC_HXG_EVENT_MSG_n_DATAn
+#define PF2GUC_SAVE_RESTORE_VF_REQUEST_MSG_3_BUFF_HI	GUC_HXG_EVENT_MSG_n_DATAn
+
+#define PF2GUC_SAVE_RESTORE_VF_RESPONSE_MSG_LEN		GUC_HXG_RESPONSE_MSG_MIN_LEN
+#define PF2GUC_SAVE_RESTORE_VF_RESPONSE_MSG_0_USED	GUC_HXG_RESPONSE_MSG_0_DATA0
+
+#define PF2GUC_SAVE_RESTORE_VF_BUFF_SIZE		SZ_4K
 
 #endif /* __GUC_ACTIONS_PF_ABI_H__ */

@@ -544,5 +544,8 @@ void intel_guc_dump_time_info(struct intel_guc *guc, struct drm_printer *p);
 
 int intel_guc_sched_disable_gucid_threshold_max(struct intel_guc *guc);
 
+int intel_guc_enable_gsc_engine(struct intel_guc *guc);
+int intel_guc_disable_gsc_engine(struct intel_guc *guc);
+
 void wake_up_all_tlb_invalidate(struct intel_guc *guc);
 #endif

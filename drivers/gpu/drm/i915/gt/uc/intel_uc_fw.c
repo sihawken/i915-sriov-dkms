@@ -109,7 +109,7 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
 	fw_def(BROXTON,      0, guc_mmp(bxt,  70, 1, 1)) \
 	fw_def(SKYLAKE,      0, guc_mmp(skl,  70, 1, 1))
 
-#define INTEL_HUC_FIRMWARE_DEFS(fw_def, huc_raw, huc_mmp, huc_gsc, huc_gsc_mmp) \
+#define INTEL_HUC_FIRMWARE_DEFS(fw_def, huc_raw, huc_mmp, huc_gsc) \
 	fw_def(METEORLAKE,   0, huc_gsc(mtl)) \
 	fw_def(DG2,          0, huc_gsc(dg2)) \
 	fw_def(ALDERLAKE_P,  0, huc_raw(tgl)) \
@@ -130,8 +130,16 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
 	fw_def(BROXTON,      0, huc_mmp(bxt,  2, 0, 0)) \
 	fw_def(SKYLAKE,      0, huc_mmp(skl,  2, 0, 0))
 
+/*
+ * The GSC FW has multiple version (see intel_gsc_uc.h for details); since what
+ * we care about is the interface, we use the compatibility version in the
+ * binary names.
+ * Same as with the GuC, a major version bump indicate a
+ * backward-incompatible change, while a minor version bump indicates a
+ * backward-compatible one, so we use only the former in the file name.
+ */
 #define INTEL_GSC_FIRMWARE_DEFS(fw_def, gsc_def) \
-	fw_def(METEORLAKE,   0, gsc_def(mtl, 102, 0, 0, 1556))
+	fw_def(METEORLAKE,   0, gsc_def(mtl, 1, 0))
 
 /*
  * Set of macros for producing a list of filenames from the above table.
@@ -152,22 +160,6 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
 	__stringify(minor_) "." \
 	__stringify(patch_) ".bin"
 
-#define __MAKE_UC_FW_PATH_MMPP(prefix_, name_, major_, minor_, patch_, postfix_) \
-	"i915/" \
-	__stringify(prefix_) "_" name_ "_" \
-	__stringify(major_) "." \
-	__stringify(minor_) "." \
-	__stringify(patch_) "_" \
-	postfix_ ".bin"
-
-#define __MAKE_UC_FW_PATH_MMPB(prefix_, name_, major_, minor_, patch_, build_) \
-	"i915/" \
-	__stringify(prefix_) "_" name_ "_" \
-	__stringify(major_) "." \
-	__stringify(minor_) "." \
-	__stringify(patch_) "." \
-	__stringify(build_) ".bin"
-
 /* Minor for internal driver use, not part of file name */
 #define MAKE_GUC_FW_PATH_MAJOR(prefix_, major_, minor_, patch_) \
 	__MAKE_UC_FW_PATH_MAJOR(prefix_, "guc", major_)
@@ -181,14 +173,11 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
 #define MAKE_HUC_FW_PATH_GSC(prefix_) \
 	__MAKE_UC_FW_PATH_BLANK(prefix_, "huc_gsc")
 
-#define MAKE_HUC_FW_PATH_GSC_MMP(prefix_, major_, minor_, patch_) \
-	__MAKE_UC_FW_PATH_MMPP(prefix_, "huc", major_, minor_, patch_, "gsc")
-
 #define MAKE_HUC_FW_PATH_MMP(prefix_, major_, minor_, patch_) \
 	__MAKE_UC_FW_PATH_MMP(prefix_, "huc", major_, minor_, patch_)
 
-#define MAKE_GSC_FW_PATH(prefix_, major_, minor_, patch, build_) \
-	__MAKE_UC_FW_PATH_MMPB(prefix_, "gsc", major_, minor_, patch, build_)
+#define MAKE_GSC_FW_PATH(prefix_, major_, minor_) \
+	__MAKE_UC_FW_PATH_MAJOR(prefix_, "gsc", major_)
 
 /*
  * All blobs need to be declared via MODULE_FIRMWARE().
@@ -199,7 +188,7 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
 	MODULE_FIRMWARE(uc_);
 
 INTEL_GUC_FIRMWARE_DEFS(INTEL_UC_MODULE_FW, MAKE_GUC_FW_PATH_MAJOR, MAKE_GUC_FW_PATH_MMP)
-INTEL_HUC_FIRMWARE_DEFS(INTEL_UC_MODULE_FW, MAKE_HUC_FW_PATH_BLANK, MAKE_HUC_FW_PATH_MMP, MAKE_HUC_FW_PATH_GSC, MAKE_HUC_FW_PATH_GSC_MMP)
+INTEL_HUC_FIRMWARE_DEFS(INTEL_UC_MODULE_FW, MAKE_HUC_FW_PATH_BLANK, MAKE_HUC_FW_PATH_MMP, MAKE_HUC_FW_PATH_GSC)
 INTEL_GSC_FIRMWARE_DEFS(INTEL_UC_MODULE_FW, MAKE_GSC_FW_PATH)
 
 /*
@@ -250,13 +239,9 @@ struct __packed uc_fw_blob {
 #define HUC_FW_BLOB_GSC(prefix_) \
 	UC_FW_BLOB_NEW(0, 0, 0, true, MAKE_HUC_FW_PATH_GSC(prefix_))
 
-#define HUC_FW_BLOB_GSC_MMP(prefix_, major_, minor_, patch_) \
-	UC_FW_BLOB_NEW(major_, minor_, patch_, true, \
-		       MAKE_HUC_FW_PATH_GSC_MMP(prefix_, major_, minor_, patch_))
-
-#define GSC_FW_BLOB(prefix_, major_, minor_, patch_, build_) \
-	UC_FW_BLOB_NEW(major_, minor_, patch_, true, \
-		       MAKE_GSC_FW_PATH(prefix_, major_, minor_, patch_, build_))
+#define GSC_FW_BLOB(prefix_, major_, minor_) \
+	UC_FW_BLOB_NEW(major_, minor_, 0, true, \
+		       MAKE_GSC_FW_PATH(prefix_, major_, minor_))
 
 struct __packed uc_fw_platform_requirement {
 	enum intel_platform p;
@@ -281,7 +266,7 @@ static const struct uc_fw_platform_requirement blobs_guc[] = {
 };
 
 static const struct uc_fw_platform_requirement blobs_huc[] = {
-	INTEL_HUC_FIRMWARE_DEFS(MAKE_FW_LIST, HUC_FW_BLOB, HUC_FW_BLOB_MMP, HUC_FW_BLOB_GSC, HUC_FW_BLOB_GSC_MMP)
+	INTEL_HUC_FIRMWARE_DEFS(MAKE_FW_LIST, HUC_FW_BLOB, HUC_FW_BLOB_MMP, HUC_FW_BLOB_GSC)
 };
 
 static const struct uc_fw_platform_requirement blobs_gsc[] = {
@@ -853,26 +838,6 @@ int intel_uc_check_file_version(struct intel_uc_fw *uc_fw, bool *old_ver)
 	if (!wanted->ver.major || !selected->ver.major)
 		return 0;
 
-	/*
-	 * FIXME: This is for GSC fw: in dii-client repo, we only allow explicit GSC
-	 * file names based on full release version. However, upstream will, (once
-	 * fully enabled) only allow GSC file names based on compatibility versions.
-	 *
-	 * In current code, "wanted" and "selected" is supposed to carry the
-	 * compatibility version (i.e. the most important thing for functional ABI
-	 * alignment across driver and firmware). However, in internal repo,
-	 * "selected" properly extracts the compatibility version of the firmware we
-	 * are planning to load while "wanted" is the file name expecting that to
-	 * match the compatibility version - as per what upstream is heading towards.
-	 *
-	 * Thus, this check will fail for dii-client so let's skip that check for now
-	 * until additional code is added (as upstream GSC FW support progresses) to
-	 * separately handle how to handle different wanted file name vs wanted
-	 * compatibility versions.
-	 */
-	if (uc_fw->type == INTEL_UC_FW_TYPE_GSC)
-		return 0;
-
 	/* Check the file's major version was as it claimed */
 	if (selected->ver.major != wanted->ver.major) {
 		UNEXPECTED(gt, "%s firmware %s: unexpected version: %u.%u != %u.%u\n",
@@ -1228,7 +1193,7 @@ static int uc_fw_rsa_data_create(struct intel_uc_fw *uc_fw)
 		return PTR_ERR(vma);
 
 	vaddr = i915_gem_object_pin_map_unlocked(vma->obj,
-						 i915_coherent_map_type(gt->i915, vma->obj, true));
+						 i915_coherent_map_type(gt, vma->obj, true));
 	if (IS_ERR(vaddr)) {
 		i915_vma_unpin_and_release(&vma, 0);
 		err = PTR_ERR(vaddr);

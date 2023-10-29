@@ -612,7 +612,7 @@ err:
 			continue;
 
 		/* Keep a copy of the state's backing pages; free the obj */
-		state = shmem_create_from_object(rq->context->state->obj);
+		state = shmem_create_from_object(rq->context->state->obj, gt);
 		if (IS_ERR(state)) {
 			err = PTR_ERR(state);
 			goto out;
@@ -1044,4 +1044,22 @@ void intel_gt_info_print(const struct intel_gt_info *info,
 	drm_printf(p, "available engines: %x\n", info->engine_mask);
 
 	intel_sseu_dump(&info->sseu, p);
+}
+
+void intel_gt_bind_context_set_ready(struct intel_gt *gt, bool ready)
+{
+	struct intel_engine_cs *engine = gt->engine[BCS0];
+
+	if (engine && engine->bind_context)
+		engine->bind_context_ready = ready;
+}
+
+bool intel_gt_is_bind_context_ready(struct intel_gt *gt)
+{
+	struct intel_engine_cs *engine = gt->engine[BCS0];
+
+	if (engine)
+		return engine->bind_context_ready;
+
+	return false;
 }
